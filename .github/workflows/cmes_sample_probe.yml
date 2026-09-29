@@ -1,4 +1,4 @@
-name: Probe BigQuant option 1m guest access
+name: Probe several expired ETF option contracts
 on:
   push:
     branches:
@@ -8,45 +8,39 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install BigQuant SDK
-        run: |
-          python -m pip install -q --extra-index-url https://pypi.bigquant.com/simple/ bigquant pandas pyarrow || python -m pip install -q -i https://pypi.bigquant.com/simple/ bigquant pandas pyarrow
-      - name: Probe guest query
+      - name: Query Sina five-day minute history
         shell: python
         run: |
-          import traceback,sys
-          try:
-              import bigquant
-              print("BIGQUANT",getattr(bigquant,"__version__",None),dir(bigquant)[:80])
-          except Exception as e:
-              print("IMPORT_ERR",type(e).__name__,str(e))
-              raise
-          try:
-              print("WHOAMI",bigquant.whoami())
-          except Exception as e:
-              print("WHOAMI_ERR",type(e).__name__,str(e)[:1000])
-          try:
-              from bigquant import dai
-          except Exception:
+          import requests, json, statistics
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
+          u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
+          codes=["10001313","10001979","10009633","10010155","10010156"]
+          for code in codes:
+              r=s.get(u,params={"symbol":"CON_OP_"+code},timeout=30)
+              print("\nCODE",code,"HTTP",r.status_code,"LEN",len(r.text))
               try:
-                  from bigquant.api import dai
+                  j=r.json()
+                  days=(j.get("result") or {}).get("data")
+                  if not isinstance(days,list):
+                      print("NO_DATA",str(days)[:500]); continue
+                  summary=[]
+                  total=0
+                  for di,day in enumerate(days):
+                      if not isinstance(day,list):
+                          continue
+                      total+=len(day)
+                      d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
+                      first=day[0].get("i") if day and isinstance(day[0],dict) else None
+                      last=day[-1].get("i") if day and isinstance(day[-1],dict) else None
+                      summary.append((d,len(day),first,last))
+                  print("DAYS",summary)
+                  print("TOTAL_BARS",total)
+                  if days and isinstance(days[0],list) and days[0]:
+                      print("FIRST_ROW",days[0][0])
+                  if days and isinstance(days[-1],list) and days[-1]:
+                      print("LAST_ROW",days[-1][-1])
               except Exception as e:
-                  print("DAI_IMPORT_ERR",type(e).__name__,str(e)); raise
-          queries=[
-              ("schema","select * from cn_option_bar1m limit 1",True,{}),
-              ("contract","select date,instrument,open,high,low,close,volume,amount,open_interest from cn_option_bar1m where instrument like '10010156%' and date >= '2025-09-29' and date <= '2025-11-26' order by date limit 20",False,{"date":["2025-09-29","2025-11-26"]}),
-          ]
-          for name,sql,full,filters in queries:
-              try:
-                  r=dai.query(sql,full_db_scan=full,filters=filters)
-                  df=r.df()
-                  print("QUERY_OK",name,df.shape)
-                  print(df.head(20).to_string())
-              except Exception as e:
-                  print("QUERY_ERR",name,type(e).__name__,str(e)[:3000])
+                  print("PARSE_ERR",type(e).__name__,str(e)[:500],"HEAD",r.text[:1000])
