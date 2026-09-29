@@ -13,8 +13,8 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,re
-          for page in ['api.html']:
-              t=requests.get('https://cmes-data.com/'+page,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-              print('PAGE',page,'LEN',len(t))
-              print('SCRIPTS',re.findall(r'<script[^>]+src=["\\']([^"\\']+)',t,re.I))
+          t=requests.get('https://cmes-data.com/api.html',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+          a=re.findall(r'<script[^>]+src="([^"]+)"',t,re.I)
+          b=re.findall(r"<script[^>]+src='([^']+)'",t,re.I)
+          print('SCRIPTS',a+b)
           PY
