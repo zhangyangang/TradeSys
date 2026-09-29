@@ -15,17 +15,25 @@ jobs:
         shell: python
         run: |
           import requests,re,html
+          from urllib.parse import urljoin
           u="https://www.wikitter.com/free"
-          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=20)
-          print("HTTP",r.status_code,"LEN",len(r.text),"URL",r.url)
-          t=r.text
-          title="ETF期权免费1分钟数据"
-          i=t.find(title)
-          print("TITLE_INDEX",i)
-          if i>=0:
-              sn=t[max(0,i-5000):i+7000]
-              print("SNIP",re.sub(r"\s+"," ",sn)[:12000])
-              links=re.findall(r'href=["\']([^"\']+)["\']',sn,re.I)
-              for x in links: print("LINK",html.unescape(x))
-              for x in re.findall(r'(?:product_id|product-id|productId)[^0-9]{0,30}([0-9]+)',sn,re.I):
-                  print("PRODUCT_ID",x)
+          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=25)
+          print("HTTP",r.status_code,"LEN",len(r.content),"ENC",r.encoding,"APP",r.apparent_encoding)
+          # Decode both likely charsets
+          for enc in ["utf-8","gb18030",r.apparent_encoding]:
+              try:
+                  t=r.content.decode(enc,errors="ignore")
+              except: continue
+              print("\nENCODING",enc,"TEXT_HEAD",re.sub(r"\s+"," ",re.sub("<[^>]+>"," ",t))[:1200])
+              for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',t,re.I|re.S):
+                  href=urljoin(r.url,html.unescape(m.group(1)))
+                  label=re.sub(r'<[^>]+>',' ',m.group(2))
+                  label=html.unescape(re.sub(r'\s+',' ',label)).strip()
+                  if label or any(k in href.lower() for k in ["product","free","option","etf"]):
+                      print("ANCHOR",label[:180],"->",href)
+              for m in re.finditer(r'(?:url|route|action)\s*[:=]\s*["\']([^"\']+)["\']',t,re.I):
+                  x=html.unescape(m.group(1))
+                  if any(k in x.lower() for k in ["product","category","free","api","index.php"]):
+                      print("SCRIPT_URL",urljoin(r.url,x))
+              for m in re.finditer(r'<script[^>]+src=["\']([^"\']+)["\']',t,re.I):
+                  print("SCRIPT",urljoin(r.url,html.unescape(m.group(1))))
