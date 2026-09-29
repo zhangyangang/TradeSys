@@ -1,4 +1,4 @@
-name: Test CMES published demo access
+name: Probe Sina ETF option minute archives
 on:
   push:
     branches:
@@ -6,85 +6,29 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  probe:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Extract provider-published demo token and test full history
+      - name: Probe Sina 5-day and intraday option endpoints
         shell: python
         run: |
-          import requests,re,json,io,zipfile,os
-          from pathlib import Path
+          import requests, json, os
           s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0"})
-          # Read current provider JS documentation and extract only tokens shown in public examples.
-          sources=[
-              "https://cmes-data.com/js/api.js?v=20260918d",
-              "https://cmes-data.com/js/api-single.js?v=20260918d",
-              "https://cmes-data.com/api.html",
-          ]
-          public_tokens=[]
-          for u in sources:
-              t=s.get(u,timeout=30).text
-              for m in re.finditer(r'(?i)(?:login|token)[^\n]{0,220}?([0-9a-z]{32})',t):
-                  tok=m.group(1)
-                  if tok not in public_tokens:
-                      public_tokens.append(tok)
-          print("PUBLIC_DEMO_TOKEN_COUNT",len(public_tokens))
-          if not public_tokens:
-              raise SystemExit("No provider-published demo token found")
-          menu="国内期权|一分钟级别|一分钟级别"
-          out=Path("out"); out.mkdir(exist_ok=True)
-          for idx,token in enumerate(public_tokens):
-              # Never print token itself.
-              try:
-                  r=s.post("https://cmes-data.com:8091/api/interface/auth2",
-                    json={"token":token,"type":"all","protocol":"new"},timeout=30)
-                  print("AUTH",idx,r.status_code,r.text[:1000].replace("\n"," "))
-              except Exception as e:
-                  print("AUTH_ERR",idx,type(e).__name__,str(e)[:300])
-              payload={
-                  "data_menu":menu,
-                  "down_type":"单只获取",
-                  "filename":"10010156.zip",
-                  "folder":"",
-                  "token":token
-              }
-              header_modes=[
-                  {"Content-Type":"application/json"},
-                  {"Content-Type":"application/json","Authorization":"Bearer "+token},
-                  {"Content-Type":"application/json","Authorization":token},
-              ]
-              for hi,headers in enumerate(header_modes):
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
+          eps={
+            "5day":"https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine",
+            "minute":"https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getOptionMinline",
+          }
+          codes=["10010156","10009633"]
+          for code in codes:
+              sym="CON_OP_"+code
+              for name,u in eps.items():
                   try:
-                      r=s.post("https://cmes-data.com:8091/api/down_file_by_token",
-                          json=payload,headers=headers,timeout=120)
-                      ct=(r.headers.get("content-type") or "").lower()
-                      print("DOWN",idx,hi,r.status_code,ct,"BYTES",len(r.content))
-                      if "json" in ct:
-                          print("DOWN_JSON",r.text[:1500].replace("\n"," "))
-                      elif r.ok and len(r.content)>100:
-                          fp=out/f"10010156_full_{idx}_{hi}.zip"
-                          fp.write_bytes(r.content)
-                          with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-                              print("ZIP_NAMES",z.namelist())
-                              for name in z.namelist():
-                                  raw=z.read(name)
-                                  (out/name).write_bytes(raw)
-                                  txt=raw.decode("utf-8-sig","ignore")
-                                  lines=txt.splitlines()
-                                  print("FULL_ROWS",len(lines))
-                                  print("FULL_FIRST",lines[:3])
-                                  print("FULL_LAST",lines[-3:])
-                          raise SystemExit(0)
-                  except SystemExit:
-                      raise
+                      r=s.get(u,params={"symbol":sym},timeout=30)
+                      print("TEST",code,name,"STATUS",r.status_code,"LEN",len(r.text))
+                      print("HEAD",r.text[:2500].replace("\n"," "))
+                      if "2025-" in r.text or "2026-" in r.text:
+                          print("HAS_DATE",code,name)
                   except Exception as e:
-                      print("DOWN_ERR",idx,hi,type(e).__name__,str(e)[:300])
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cmes-published-demo-result
-          path: out/
-          if-no-files-found: warn
-          retention-days: 1
+                      print("ERR",code,name,repr(e))
