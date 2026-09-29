@@ -1,4 +1,4 @@
-name: Wikitter registration form probe
+name: Enumerate public option sample files
 on:
   push:
     branches:
@@ -6,30 +6,76 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect registration form
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -q requests beautifulsoup4
+      - name: Crawl sitemaps and collect sample URLs
         shell: python
         run: |
-          import requests,re,html
-          from urllib.parse import urljoin
+          import requests,re,html,urllib.parse,time
+          from bs4 import BeautifulSoup
           s=requests.Session(); s.headers["User-Agent"]="Mozilla/5.0"
-          u="https://www.wikitter.com/index.php?route=account/register"
-          r=s.get(u,timeout=25)
-          print("HTTP",r.status_code,"LEN",len(r.text),"FINAL",r.url)
-          t=r.text
-          for fm in re.finditer(r'<form([^>]*)>(.*?)</form>',t,re.I|re.S):
-              attrs=fm.group(1); body=fm.group(2)
-              print("FORM_ATTR",re.sub(r'\s+',' ',attrs)[:1000])
-              for inp in re.finditer(r'<(?:input|select|textarea)([^>]*)>',body,re.I|re.S):
-                  a=inp.group(1)
-                  name=re.search(r'name=["\']([^"\']+)',a,re.I)
-                  typ=re.search(r'type=["\']([^"\']+)',a,re.I)
-                  val=re.search(r'value=["\']([^"\']*)',a,re.I)
-                  req=("required" in a.lower())
-                  print("FIELD",name.group(1) if name else None,typ.group(1) if typ else None,val.group(1) if val else None,"REQ",req)
-          text=re.sub(r'<[^>]+>',' ',t)
-          print("TEXT",html.unescape(re.sub(r'\s+',' ',text))[:10000])
+          domains=["https://www.wikitter.com","https://www.qiquanshuju.com","https://www.caifushuju.cn"]
+          pages=set()
+          sample_urls=set()
+          def get(u,timeout=25):
+              try:
+                  r=s.get(u,timeout=timeout,allow_redirects=True)
+                  return r
+              except Exception as e:
+                  print("GET_ERR",u,type(e).__name__,str(e)[:100]); return None
+          for d in domains:
+              for sm in ["/sitemap.xml","/sitemap_index.xml","/sitemap.txt","/robots.txt"]:
+                  r=get(d+sm)
+                  if not r: continue
+                  print("SEED",d+sm,"HTTP",r.status_code,"LEN",len(r.content))
+                  t=r.text
+                  for u in re.findall(r'https?://[^<\s"\']+',t):
+                      u=html.unescape(u.strip())
+                      if u.startswith(d):
+                          if "sitemap" in u.lower():
+                              rr=get(u)
+                              if rr:
+                                  for x in re.findall(r'https?://[^<\s"\']+',rr.text):
+                                      x=html.unescape(x.strip())
+                                      if x.startswith(d) and "sitemap" not in x.lower(): pages.add(x)
+                          else: pages.add(u)
+          print("PAGES_FROM_SITEMAP",len(pages))
+          # if sparse, seed known category/search pages
+          pages.update([
+            "https://www.wikitter.com/free",
+            "https://www.wikitter.com/min",
+            "https://www.qiquanshuju.com/min",
+            "https://www.caifushuju.cn/category.php?id=93",
+          ])
+          # cap 1200 pages
+          for idx,u in enumerate(sorted(pages)[:1200]):
+              r=get(u,15)
+              if not r or r.status_code!=200: continue
+              t=r.text
+              for m in re.finditer(r'(?:href|src)=["\']([^"\']+)["\']',t,re.I):
+                  x=urllib.parse.urljoin(r.url,html.unescape(m.group(1)))
+                  if "/sample/" in x.lower() or re.search(r'\.(?:csv|zip|7z|rar)(?:\?|$)',x,re.I):
+                      sample_urls.add(x)
+              # also plaintext embedded URLs
+              for x in re.findall(r'https?://[^\s<>"\']+',t):
+                  x=html.unescape(x.rstrip(").,;"))
+                  if "/sample/" in x.lower() or re.search(r'\.(?:csv|zip|7z|rar)(?:\?|$)',x,re.I):
+                      sample_urls.add(x)
+          print("SAMPLE_URLS",len(sample_urls))
+          for u in sorted(sample_urls):
+              print("SAMPLE",u)
+          # Probe only option-ish/small-looking public files
+          for u in sorted(sample_urls):
+              low=u.lower()
+              if not any(k in low for k in ["opt","qiquan","option","510050","510300","510500","1599","stockonmin","vix","iv"]):
+                  continue
+              r=get(u,30)
+              if not r: continue
+              print("PROBE",u,"HTTP",r.status_code,"LEN",len(r.content),"TYPE",r.headers.get("content-type"),"FINAL",r.url)
