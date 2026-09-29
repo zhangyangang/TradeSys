@@ -1,0 +1,54 @@
+name: Probe CMES anonymous access
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install
+        run: python -m pip install -q cmesdata==1.2.46 pandas
+      - name: Probe
+        shell: bash
+        env:
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+        run: |
+          python - <<'PY'
+          import cmesdata as cs, inspect
+          print("NAMES", [x for x in dir(cs) if not x.startswith("_")])
+          for name in ["login","get_history_data","get_option_minute","CMESClient"]:
+              obj=getattr(cs,name,None)
+              print("OBJ",name,obj)
+              try:
+                  if obj: print("SIG",name,inspect.signature(obj))
+              except Exception as e: print("SIGERR",repr(e))
+          tests=[]
+          if hasattr(cs,"get_history_data"):
+              tests.append(("history", lambda: cs.get_history_data("SH.510500","2025-10-23","2025-10-23","1min")))
+          if hasattr(cs,"get_option_minute"):
+              tests.append(("option", lambda: cs.get_option_minute(symbol="510500P2511M06250",start="2025-10-23",end="2025-10-23")))
+          if hasattr(cs,"CMESClient"):
+              try:
+                  cli=cs.CMESClient()
+                  print("CLIENT",cli)
+                  if hasattr(cli,"get_option_minute"):
+                      tests.append(("client_option",lambda: cli.get_option_minute(symbol="510500P2511M06250",start="2025-10-23",end="2025-10-23")))
+              except Exception as e: print("CLIENTERR",repr(e))
+          for label,fn in tests:
+              try:
+                  r=fn()
+                  print(label,type(r),getattr(r,"shape",None))
+                  print(r.head().to_string() if hasattr(r,"head") else repr(r)[:2000])
+              except Exception as e:
+                  print(label,"ERR",type(e).__name__,str(e)[:2000])
+          PY
