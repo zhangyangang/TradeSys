@@ -1,0 +1,35 @@
+name: Inspect CMES wheel internals
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect without importing
+        shell: bash
+        run: |
+          set -e
+          mkdir -p /tmp/cmeswheel
+          python -m pip download --no-deps cmesdata==1.2.46 -d /tmp/cmeswheel
+          python - <<'PY'
+          import glob, zipfile, re
+          whl=glob.glob('/tmp/cmeswheel/*.whl')[0]
+          z=zipfile.ZipFile(whl)
+          print("WHEEL",whl)
+          print("FILES")
+          for n in z.namelist():
+              print(n)
+          for n in z.namelist():
+              if n.endswith('.py'):
+                  s=z.read(n).decode('utf-8','ignore')
+                  print("\n=====FILE",n,"=====")
+                  for line in s.splitlines():
+                      if any(k in line.lower() for k in ['http','login','history','minute','option','token','api','request']):
+                          print(line[:500])
+          PY
