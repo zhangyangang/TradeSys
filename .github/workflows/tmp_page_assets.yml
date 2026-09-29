@@ -1,0 +1,20 @@
+name: Inspect page assets
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python - <<'PY'
+          import requests,re
+          u='https://cmes-data.com/profile.html'
+          t=requests.get(u,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+          print('len',len(t))
+          print('\n'.join(re.findall(r'<script[^>]*>.*?</script>|<script[^>]+src=["\'][^"\']+["\'][^>]*></script>',t,re.I|re.S))[-20000:])
+          PY
