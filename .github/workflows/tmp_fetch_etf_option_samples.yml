@@ -20,9 +20,9 @@ jobs:
           import os, urllib.request, csv, re, gzip, shutil
           os.makedirs("out2", exist_ok=True)
           urls = [
-            ("50O1minlx.csv","https://od.lk/d/NTNfMTE2NDQ2NTZf/50O1minlx.csv"),
-            ("50O1minivf.csv","https://od.lk/d/NTNfMTE2NDQ2NTRf/50O1minivf.csv"),
-            ("50o1minlxatm.csv","https://od.lk/d/NTNfMTE3NDU4MDhf/50o1minlxatm.csv"),
+            ("ivf50etfo1min.csv","https://od.lk/d/NTNfMTMwMjc0OTVf/ivf50etfo1min.csv"),
+            ("10000888M.csv","https://od.lk/d/NTNfODIwODkxMl8/10000888M.csv"),
+            ("50o1minivfatm.csv","https://od.lk/d/NTNfMTE3NDU3ODRf/50o1minivfatm.csv"),
           ]
           for name,url in urls:
               print("FETCH",url)
