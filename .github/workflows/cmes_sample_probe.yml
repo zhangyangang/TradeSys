@@ -1,4 +1,4 @@
-name: Probe CMES public option sample
+name: Fetch CMES option sample data
 on:
   push:
     branches:
@@ -6,43 +6,59 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  fetch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Probe exact anonymous option sample request
+      - name: Fetch and extract real 1-minute option sample
         shell: python
         run: |
-          import requests, os, re, json
-          s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"})
-          js=s.get("https://cmes-data.com/js/download.js?v=20260929",timeout=30).text
-          lines=js.splitlines()
-          for i,line in enumerate(lines):
-              if "_GN_OPTION_CODE_LIST" in line:
-                  print("CODELIST_HIT",i+1,line[:2000])
-                  for j in range(max(0,i-5),min(len(lines),i+80)):
-                      print(f"CODELIST {j+1}: {lines[j][:3000]}")
-                  break
-          base="https://cmes-data.com/api/sample"
-          menu="国内期权|一分钟级别|一分钟级别"
-          codes=[
-              "HO2609-C-2500",
-              "10010156",
-              "SH.10010156",
-              "510500P2511M06250",
-              "510500-P-2511-6.25",
-              "510500-P-2511-6250"
-          ]
-          os.makedirs("out",exist_ok=True)
-          for n,code in enumerate(codes):
-              params={"data_menu":menu,"down_type":"单只获取","code":code}
-              r=s.get(base,params=params,timeout=30)
-              print("CODE",code,"STATUS",r.status_code,"TYPE",r.headers.get("content-type"))
-              print("BODY",r.text[:5000].replace("\n"," "))
-              open(f"out/{n}_{re.sub('[^A-Za-z0-9_.-]','_',code)}.txt","w",encoding="utf-8").write("URL "+r.url+"\n"+r.text)
+          import requests, os, base64, io, zipfile, csv, json
+          from pathlib import Path
+          out=Path("out"); out.mkdir(exist_ok=True)
+          params={
+              "data_menu":"国内期权|一分钟级别|一分钟级别",
+              "down_type":"单只获取",
+              "code":"10010156"
+          }
+          r=requests.get(
+              "https://cmes-data.com/api/sample",
+              params=params,
+              headers={"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"},
+              timeout=30
+          )
+          print("HTTP",r.status_code)
+          r.raise_for_status()
+          j=r.json()
+          print("SUCCESS",j.get("success"))
+          d=j["data"]
+          meta={k:v for k,v in d.items() if k!="zip_data"}
+          print("META",json.dumps(meta,ensure_ascii=False))
+          zbytes=base64.b64decode(d["zip_data"])
+          (out/"10010156_sample.zip").write_bytes(zbytes)
+          with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+              print("ZIP NAMES",z.namelist())
+              for name in z.namelist():
+                  raw=z.read(name)
+                  (out/name).write_bytes(raw)
+                  text=None
+                  for enc in ("utf-8-sig","gb18030","utf-8"):
+                      try:
+                          text=raw.decode(enc)
+                          print("ENC",enc)
+                          break
+                      except UnicodeDecodeError:
+                          pass
+                  if text is not None:
+                      lines=text.splitlines()
+                      print("CSV ROWS INCLUDING HEADER",len(lines))
+                      print("HEAD")
+                      print("\n".join(lines[:12]))
+                      print("TAIL")
+                      print("\n".join(lines[-12:]))
+          (out/"metadata.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
       - uses: actions/upload-artifact@v4
         with:
-          name: cmes-exact-sample-probe
+          name: cmes-10010156-real-1min-sample
           path: out/
           retention-days: 1
