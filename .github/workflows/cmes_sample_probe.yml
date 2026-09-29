@@ -1,0 +1,56 @@
+name: Probe CMES public option sample
+on:
+  push:
+    branches:
+      - "tmp/cmes-sample-probe"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe anonymous sample endpoint
+        shell: python
+        run: |
+          import requests, urllib.parse, json, re, os
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"})
+          # Inspect option config around the literal first
+          js=s.get("https://cmes-data.com/js/download.js?v=20260929",timeout=30).text
+          lines=js.splitlines()
+          for i,line in enumerate(lines):
+              if "国内期权" in line or "gn_option_1min" in line:
+                  print("CFG",i+1,line[:2500])
+                  for j in range(max(0,i-8),min(len(lines),i+18)):
+                      print(f"CFGCTX {j+1}: {lines[j][:2500]}")
+          base="https://cmes-data.com/api/sample"
+          menus=[
+              "国内期权|一分钟级别|一分钟级别",
+              "国内期权|期权分钟|一分钟级别",
+              "国内期权|分钟|一分钟级别",
+          ]
+          downs=["直接下载","批量下载","接口下载",""]
+          codes=["10010156","SH.10010156","510500P2511M06250"]
+          os.makedirs("out",exist_ok=True)
+          n=0
+          for menu in menus:
+              for down in downs:
+                  for code in codes:
+                      params={"data_menu":menu,"down_type":down,"code":code}
+                      try:
+                          r=s.get(base,params=params,timeout=30)
+                          body=r.text
+                          print("REQ",r.url)
+                          print("RESP",r.status_code,r.headers.get("content-type"),body[:1200].replace("\n"," "))
+                          open(f"out/resp_{n}.txt","w",encoding="utf-8").write("URL "+r.url+"\nSTATUS "+str(r.status_code)+"\n"+body)
+                          n+=1
+                          if r.ok and '"success":true' in body.replace(" ","").lower():
+                              print("SUCCESS_CANDIDATE",menu,down,code)
+                      except Exception as e:
+                          print("ERR",menu,down,code,repr(e))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmes-sample-probe
+          path: out/
+          retention-days: 1
