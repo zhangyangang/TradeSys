@@ -1,4 +1,4 @@
-name: Inspect public ETF option tick samples
+name: Probe Wikitter free ETF option 1m package
 on:
   push:
     branches:
@@ -6,61 +6,56 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: python -m pip install -q requests pandas
-      - name: Download and inspect ZIP samples
+      - name: Fetch free listing and product pages
         shell: python
         run: |
-          import requests, zipfile, io, os, csv, pandas as pd, re, collections
-          urls=[
-            ("300ETF_TICK","https://www.caifushuju.cn/sample/300ETFQIUAN-TICK.zip"),
-            ("50ETF_TICK","https://www.caifushuju.cn/sample/50qiquan-rixian-5tick.zip"),
-            ("50ETF_5MIN","https://www.caifushuju.cn/sample/50qiquan-rixian-5min.csv.zip"),
-          ]
-          for name,url in urls:
-              print("\n###",name,url)
-              r=requests.get(url,timeout=120)
-              print("HTTP",r.status_code,"BYTES",len(r.content),"FINAL",r.url)
-              if r.status_code!=200 or not r.content.startswith(b"PK"):
-                  print("HEAD",repr(r.content[:300])); continue
-              z=zipfile.ZipFile(io.BytesIO(r.content))
-              files=[x for x in z.namelist() if not x.endswith("/")]
-              print("FILES",len(files))
-              print("NAMES_HEAD",files[:20])
-              print("NAMES_TAIL",files[-10:])
-              total_lines=0; dates=set(); contracts=set(); headers=collections.Counter()
-              samples=0
-              for fn in files:
-                  b=z.read(fn)
-                  txt=None; enc_used=None
-                  for enc in ("utf-8-sig","gb18030","gbk","utf-8"):
-                      try: txt=b.decode(enc); enc_used=enc; break
-                      except: pass
-                  if txt is None: continue
-                  lines=txt.splitlines()
-                  total_lines += max(0,len(lines)-1)
-                  if lines:
-                      headers[lines[0]] += 1
-                  # scan date/timestamps and contract code filename/content
-                  m=re.search(r'(?:OP)?(\d{8})',fn)
-                  if m: contracts.add(m.group(1))
-                  for line in lines[1:]:
-                      # yyyy-mm-dd or yyyy/mm/dd
-                      mm=re.search(r'(20\d{2}[-/]\d{1,2}[-/]\d{1,2})',line)
-                      if mm: dates.add(mm.group(1).replace("/","-"))
-                  if samples<3:
-                      print("FILE_SAMPLE",fn,"ENC",enc_used,"LINES",len(lines))
-                      print("FIRST3",lines[:3])
-                      print("LAST2",lines[-2:])
-                      samples+=1
-              print("TOTAL_DATA_LINES",total_lines)
-              print("CONTRACTS",len(contracts),sorted(contracts)[:10],sorted(contracts)[-10:])
-              print("DATES",len(dates),sorted(dates)[:10],sorted(dates)[-10:])
-              print("HEADERS",headers.most_common(5))
+          import requests,re,html,json
+          from urllib.parse import urljoin
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0"})
+          urls=["https://www.wikitter.com/free","https://www.wikitter.com/all?limit=75&order=DESC&page=2&sort=p.price"]
+          seen=set()
+          for u in urls:
+              try:
+                  r=s.get(u,timeout=40)
+                  print("\nPAGE",u,"HTTP",r.status_code,"LEN",len(r.text),"FINAL",r.url)
+                  text=r.text
+                  for m in re.finditer(r'href=["\']([^"\']+)["\']',text,re.I):
+                      href=html.unescape(m.group(1))
+                      low=href.lower()
+                      if any(k in low for k in ["free","1min","minute","etf-opt","opt-1"]):
+                          full=urljoin(r.url,href)
+                          if full not in seen:
+                              seen.add(full); print("LINK",full)
+                  for pat in ["ETF期权免费1分钟数据","588080","159919","￥0.00","product_id","add-to-cart","checkout","cart"]:
+                      if pat in text:
+                          print("HAS",pat)
+                  # print snippets around title
+                  idx=text.find("ETF期权免费1分钟数据")
+                  if idx>=0: print("SNIP",re.sub(r'\s+',' ',text[max(0,idx-1200):idx+2500])[:5000])
+              except Exception as e:
+                  print("ERR",u,type(e).__name__,str(e))
+          # Fetch candidate links
+          for u in list(seen):
+              if u.startswith("https://www.wikitter.com/"):
+                  try:
+                      r=s.get(u,timeout=30)
+                      if "ETF期权免费1分钟数据" in r.text or "588080" in r.text:
+                          print("\nCANDIDATE",u,"HTTP",r.status_code,"LEN",len(r.text))
+                          text=r.text
+                          # forms
+                          for fm in re.finditer(r'<form[^>]*action=["\']?([^"\' >]+)[^>]*>(.*?)</form>',text,re.I|re.S):
+                              action=urljoin(r.url,html.unescape(fm.group(1)))
+                              body=fm.group(2)
+                              print("FORM",action,re.sub(r'\s+',' ',body)[:3000])
+                          for m in re.finditer(r'href=["\']([^"\']+)["\']',text,re.I):
+                              href=html.unescape(m.group(1))
+                              if any(k in href.lower() for k in ["od.lk","download","csv","zip","free"]):
+                                  print("DOWNLOADISH",urljoin(r.url,href))
+                  except Exception as e:
+                      print("CAND_ERR",u,type(e).__name__,str(e))
