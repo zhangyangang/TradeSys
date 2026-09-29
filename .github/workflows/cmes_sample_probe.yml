@@ -1,4 +1,4 @@
-name: Inspect CMES batch protocol
+name: Probe CMES sample refresh coverage
 on:
   push:
     branches:
@@ -6,26 +6,49 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  probe:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect current cmesdata HTTP protocol
-        shell: bash
+      - name: Repeatedly fetch sample and measure unique 1m bars
+        shell: python
         run: |
-          python -m pip download --no-deps cmesdata==1.2.46 -d /tmp >/dev/null
-          python - <<'PY'
-          import glob,zipfile
-          whl=glob.glob('/tmp/cmesdata-*.whl')[0]
-          z=zipfile.ZipFile(whl)
-          for fn in ['cmesdata/historydata.py','cmesdata/stock.py']:
-              s=z.read(fn).decode('utf-8','ignore')
-              lines=s.splitlines()
-              print('===== '+fn+' =====')
-              for key in ['def _fetch_symbol_list','def _download_file','def _require_token','def login']:
-                  for i,line in enumerate(lines):
-                      if line.startswith(key):
-                          print('--- '+key+' ---')
-                          print('\n'.join(lines[i:i+100]))
-                          break
-          PY
+          import requests, base64, io, zipfile, hashlib, time, csv, json
+          from collections import Counter
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"})
+          url="https://cmes-data.com/api/sample"
+          params={
+            "data_menu":"国内期权|一分钟级别|一分钟级别",
+            "down_type":"单只获取",
+            "code":"10010156"
+          }
+          seen={}
+          hashes=[]
+          runs=[]
+          for i in range(30):
+              r=s.get(url,params=params,timeout=30)
+              j=r.json()
+              d=j.get("data") or {}
+              zb=base64.b64decode(d.get("zip_data",""))
+              with zipfile.ZipFile(io.BytesIO(zb)) as z:
+                  raw=z.read(z.namelist()[0])
+              txt=raw.decode("utf-8-sig")
+              rows=list(csv.reader(io.StringIO(txt)))
+              data=rows[1:] if rows and rows[0] and ("时间" in rows[0][0] or "time" in rows[0][0].lower()) else rows
+              ts=[row[0] for row in data if row]
+              h=hashlib.sha256(raw).hexdigest()[:16]
+              hashes.append(h)
+              for row in data:
+                  if row: seen[row[0]]=row
+              runs.append({"i":i,"n":len(data),"first":ts[0] if ts else None,"last":ts[-1] if ts else None,"hash":h})
+              print("RUN",i,"N",len(data),"FIRST",ts[0] if ts else None,"LAST",ts[-1] if ts else None,"HASH",h,"UNIQUE_TOTAL",len(seen))
+              time.sleep(0.25)
+          print("SUMMARY",json.dumps({
+            "requests":len(runs),
+            "unique_hashes":len(set(hashes)),
+            "unique_timestamps":len(seen),
+            "min_ts":min(seen) if seen else None,
+            "max_ts":max(seen) if seen else None,
+            "runs":runs
+          },ensure_ascii=False))
