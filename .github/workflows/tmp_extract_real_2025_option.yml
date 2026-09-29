@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install parquet dependencies
+        run: python -m pip install -q pandas pyarrow
       - name: Download public 500ETF option parquet and extract one 2025 contract
         shell: bash
         run: |
