@@ -1,0 +1,44 @@
+name: Download Wikitter 1m option raw sample archive
+on:
+  push:
+    branches:
+      - "tmp/cmes-sample-probe"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and inspect 7z
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import requests, hashlib
+          u="https://www.wikitter.com/sample/vixivx1min.7z"
+          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=60)
+          print("HTTP",r.status_code,"LEN",len(r.content),"TYPE",r.headers.get("content-type"),"FINAL",r.url)
+          print("SHA256",hashlib.sha256(r.content).hexdigest())
+          open("/tmp/vixivx1min.7z","wb").write(r.content)
+          PY
+          7z l /tmp/vixivx1min.7z || true
+          rm -rf /tmp/vixsample
+          mkdir -p /tmp/vixsample
+          7z x -y /tmp/vixivx1min.7z -o/tmp/vixsample
+          find /tmp/vixsample -type f -printf '%p %s bytes\n' | head -100
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          for p in sorted(Path("/tmp/vixsample").rglob("*")):
+              if not p.is_file(): continue
+              print("\nFILE",p,p.stat().st_size)
+              b=p.read_bytes()[:5000]
+              for enc in ("utf-8-sig","gb18030","utf-16","latin1"):
+                  try:
+                      t=b.decode(enc)
+                      print("HEAD",enc,repr(t[:2500]))
+                      break
+                  except: pass
+          PY
