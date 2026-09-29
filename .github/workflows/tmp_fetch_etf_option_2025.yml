@@ -1,0 +1,109 @@
+name: Temporary ETF option data fetch
+
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Eastmoney historical bars
+        shell: python
+        run: |
+          import csv, json, os, urllib.parse, urllib.request, time
+          code = "10008833"
+          beg = "20250701"
+          end = "20250924"
+          os.makedirs("out", exist_ok=True)
+          for klt in ("1","5","15","30","60"):
+              params = {
+                  "secid": f"10.{code}",
+                  "fields1":"f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+                  "fields2":"f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                  "klt":klt,"fqt":"0","beg":beg,"end":end,
+                  "ut":"fa5fd1943c7b386f172d6893dbfba10b"
+              }
+              url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" + urllib.parse.urlencode(params)
+              req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0","Referer":"https://quote.eastmoney.com/"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode("utf-8")
+                  open(f"out/eastmoney_klt{klt}_raw.json","w",encoding="utf-8").write(raw)
+                  obj = json.loads(raw)
+                  lines = ((obj.get("data") or {}).get("klines") or [])
+                  if lines:
+                      with open(f"out/10008833_500ETF_call_202509_5.5_{klt}min.csv","w",newline="",encoding="utf-8-sig") as f:
+                          w=csv.writer(f)
+                          w.writerow(["datetime","open","close","high","low","volume","amount","amplitude","pct_change","change","turnover"])
+                          for line in lines:
+                              w.writerow(line.split(","))
+                      print("EASTMONEY", klt, "rows", len(lines), "first", lines[0], "last", lines[-1])
+                  else:
+                      print("EASTMONEY", klt, "NO KLINES", raw[:500])
+              except Exception as e:
+                  print("EASTMONEY", klt, "ERROR", repr(e))
+              time.sleep(1)
+      - name: Fetch via TongdaXin EX protocol
+        shell: bash
+        run: |
+          python -m pip install -q pytdx pandas || true
+          python - <<'PY'
+          import os, traceback
+          try:
+              import pandas as pd
+              from pytdx.exhq import TdxExHq_API
+              hosts=[
+                  ("116.205.143.214",7727),
+                  ("103.221.142.82",7727),
+                  ("119.147.86.171",7727),
+                  ("47.92.127.181",7727),
+                  ("61.152.107.141",7727),
+              ]
+              code="10008833"
+              for host,port in hosts:
+                  api=TdxExHq_API(raise_exception=True)
+                  try:
+                      with api.connect(host,port,time_out=5):
+                          chunks=[]
+                          # market 8 = Shanghai stock options; category 8 = 1 minute
+                          for start in range(0,20800,700):
+                              rows=api.get_instrument_bars(8,8,code,start,700)
+                              if rows:
+                                  chunks.extend(rows)
+                          if chunks:
+                              df=api.to_df(chunks)
+                              print("TDX",host,"raw rows",len(df),"cols",list(df.columns))
+                              if "datetime" in df:
+                                  dt=pd.to_datetime(df["datetime"],errors="coerce")
+                                  keep=(dt >= "2025-01-01") & (dt < "2026-01-01")
+                                  out=df.loc[keep].copy()
+                              else:
+                                  out=df
+                              out.to_csv("out/10008833_tdx_1min_2025.csv",index=False,encoding="utf-8-sig")
+                              print("TDX 2025 rows",len(out))
+                              if len(out):
+                                  print(out.head(3).to_string(index=False))
+                                  print(out.tail(3).to_string(index=False))
+                                  break
+                  except Exception as e:
+                      print("TDX HOST ERROR",host,repr(e))
+          except Exception:
+              traceback.print_exc()
+          PY
+      - name: List output
+        run: |
+          ls -lh out || true
+          for f in out/*.csv; do echo "=== $f ==="; head -5 "$f"; tail -3 "$f"; done || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: etf-option-2025-data
+          path: out/
+          if-no-files-found: warn
+          retention-days: 1
