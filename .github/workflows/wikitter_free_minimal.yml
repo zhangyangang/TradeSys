@@ -1,0 +1,31 @@
+name: Wikitter free page minimal probe
+on:
+  push:
+    branches:
+      - "tmp/cmes-sample-probe"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and parse
+        shell: python
+        run: |
+          import requests,re,html
+          u="https://www.wikitter.com/free"
+          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=20)
+          print("HTTP",r.status_code,"LEN",len(r.text),"URL",r.url)
+          t=r.text
+          title="ETF期权免费1分钟数据"
+          i=t.find(title)
+          print("TITLE_INDEX",i)
+          if i>=0:
+              sn=t[max(0,i-5000):i+7000]
+              print("SNIP",re.sub(r"\s+"," ",sn)[:12000])
+              links=re.findall(r'href=["\']([^"\']+)["\']',sn,re.I)
+              for x in links: print("LINK",html.unescape(x))
+              for x in re.findall(r'(?:product_id|product-id|productId)[^0-9]{0,30}([0-9]+)',sn,re.I):
+                  print("PRODUCT_ID",x)
