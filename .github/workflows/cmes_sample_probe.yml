@@ -1,4 +1,4 @@
-name: Probe Sina ETF option minute archives
+name: Probe Sina historical window params
 on:
   push:
     branches:
@@ -10,25 +10,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Probe Sina 5-day and intraday option endpoints
+      - name: Test date-like parameters on public five-day endpoint
         shell: python
         run: |
-          import requests, json, os
+          import requests,json,hashlib
           s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
-          eps={
-            "5day":"https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine",
-            "minute":"https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getOptionMinline",
-          }
-          codes=["10010156","10009633"]
-          for code in codes:
-              sym="CON_OP_"+code
-              for name,u in eps.items():
-                  try:
-                      r=s.get(u,params={"symbol":sym},timeout=30)
-                      print("TEST",code,name,"STATUS",r.status_code,"LEN",len(r.text))
-                      print("HEAD",r.text[:2500].replace("\n"," "))
-                      if "2025-" in r.text or "2026-" in r.text:
-                          print("HAS_DATE",code,name)
-                  except Exception as e:
-                      print("ERR",code,name,repr(e))
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://stock.finance.sina.com.cn/"})
+          u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
+          sym="CON_OP_10010156"
+          cases=[
+            {},
+            {"date":"2025-11-13"},
+            {"date":"2025-10-31"},
+            {"end_date":"2025-11-13"},
+            {"endDate":"2025-11-13"},
+            {"trade_date":"2025-11-13"},
+            {"start_date":"2025-11-10","end_date":"2025-11-14"},
+            {"from":"2025-11-10","to":"2025-11-14"},
+          ]
+          for i,extra in enumerate(cases):
+              p={"symbol":sym}; p.update(extra)
+              r=s.get(u,params=p,timeout=30)
+              h=hashlib.sha256(r.content).hexdigest()[:16]
+              try:
+                  j=r.json(); days=(j.get("result") or {}).get("data") or []
+                  dates=[]
+                  for day in days:
+                      if isinstance(day,list) and day:
+                          d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
+                          dates.append(d)
+                  print("CASE",i,extra,"STATUS",r.status_code,"HASH",h,"DATES",dates,"LEN",len(r.text))
+              except Exception as e:
+                  print("CASE",i,extra,"ERR",repr(e),"HASH",h,"HEAD",r.text[:300])
