@@ -1,4 +1,4 @@
-name: Probe anonymous RQData option 1m
+name: Probe public ETF option sample CSVs
 on:
   push:
     branches:
@@ -11,38 +11,46 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install rqdatac
-        run: python -m pip install -q rqdatac pandas
-      - name: Probe anonymous init and ETF option minute bars
+      - name: Fetch public sample files
         shell: python
         run: |
-          import rqdatac as rq, traceback, pandas as pd, os
-          print("VERSION",getattr(rq,"__version__",None))
-          try:
-              x=rq.init()
-              print("INIT_OK",repr(x))
-          except Exception as e:
-              print("INIT_ERR",type(e).__name__,str(e)[:2000])
-              traceback.print_exc(limit=2)
-          tests=[
-            ("10001313","2018-12-20","2018-12-20"),
-            ("10010156","2025-10-23","2025-10-23"),
-            ("510050.XSHG","2025-10-23","2025-10-23"),
+          import requests, csv, io, re, json
+          urls=[
+            "https://od.lk/d/NTNfMTE2NDQ2NTZf/50O1minlx.csv",
+            "https://od.lk/d/NTNfMTE2NDQ2NTJf/50O1minir.csv",
+            "https://od.lk/d/NTNfMTE2NDQ2NTVf/50O1minivs.csv",
+            "https://od.lk/d/NTNfMTE2NDQ2NTNf/50O1miniv.csv",
+            "https://od.lk/d/NTNfMTE2NDQ2NTRf/50O1minivf.csv",
+            "https://od.lk/d/NTNfMTM1MTUzMjFf/o50iv1minrp.csv",
+            "https://od.lk/d/NTNfMTM1MTUzMjBf/o50iv1minsi.csv",
+            "https://od.lk/d/NTNfMTMxNDg2MTBf/sim1min50.csv",
+            "http://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
+            "https://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
           ]
-          for code,start,end in tests:
-              print("\nTEST",code)
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0"})
+          for u in urls:
+              print("\nURL",u)
               try:
-                  df=rq.get_price(code,start_date=start,end_date=end,frequency="1m")
-                  print("TYPE",type(df).__name__)
-                  if df is None:
-                      print("NONE")
-                  else:
-                      print("SHAPE",getattr(df,"shape",None))
-                      print(df.head(5).to_string())
-                      print(df.tail(5).to_string())
+                  r=s.get(u,timeout=30,allow_redirects=True)
+                  print("STATUS",r.status_code,"FINAL",r.url,"LEN",len(r.content),"CTYPE",r.headers.get("content-type"))
+                  head=r.content[:2000]
+                  try:
+                      txt=head.decode("utf-8-sig")
+                  except:
+                      try: txt=head.decode("gb18030")
+                      except: txt=repr(head)
+                  print("HEAD",repr(txt[:1000]))
+                  if r.status_code==200 and len(r.content)>100:
+                      data=r.content
+                      # estimate rows for text
+                      for enc in ("utf-8-sig","gb18030","utf-8"):
+                          try:
+                              t=data.decode(enc)
+                              lines=t.splitlines()
+                              print("ENC",enc,"LINES",len(lines),"FIRST3",lines[:3],"LAST2",lines[-2:])
+                              break
+                          except Exception:
+                              pass
               except Exception as e:
-                  print("ERR",type(e).__name__,str(e)[:3000])
-                  traceback.print_exc(limit=2)
+                  print("ERR",type(e).__name__,str(e)[:500])
