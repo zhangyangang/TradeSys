@@ -1,4 +1,4 @@
-name: Probe Sina SZSE ETF option minute history
+name: Probe earliest SZSE ETF option codes on Sina
 on:
   push:
     branches:
@@ -10,46 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Query Shenzhen ETF option codes on Sina
+      - name: Query early Shenzhen ETF option codes
         shell: python
         run: |
-          import requests, json
+          import requests
           s=requests.Session()
           s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
           u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
-          codes=[
-            ("90000291","SZSE 300ETF 2020"),
-            ("90001345","SZSE 500ETF 2022"),
-            ("90005168","ChiNext ETF 2025"),
-          ]
-          prefixes=["CON_OP_","CON_SO_",""]
-          for code,label in codes:
-              print("\n###",code,label)
-              for pref in prefixes:
-                  sym=pref+code
-                  try:
-                      r=s.get(u,params={"symbol":sym},timeout=30)
-                      print("SYM",sym,"HTTP",r.status_code,"LEN",len(r.text))
-                      try:
-                          j=r.json()
-                          days=(j.get("result") or {}).get("data")
-                          if isinstance(days,list):
-                              summary=[]
-                              total=0
-                              for day in days:
-                                  if not isinstance(day,list): continue
-                                  total += len(day)
-                                  d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
-                                  first=day[0].get("i") if day and isinstance(day[0],dict) else None
-                                  last=day[-1].get("i") if day and isinstance(day[-1],dict) else None
-                                  summary.append((d,len(day),first,last))
-                              print("DAYS",summary,"TOTAL",total)
-                              if total:
-                                  print("FIRST",days[0][0])
-                                  print("LAST",days[-1][-1])
-                          else:
-                              print("DATA",str(days)[:300])
-                      except Exception as e:
-                          print("JSON_ERR",type(e).__name__,str(e)[:300],"HEAD",r.text[:500])
-                  except Exception as e:
-                      print("REQ_ERR",sym,type(e).__name__,str(e)[:300])
+          for code in ["90000001","90000002","90000010","90000291"]:
+              r=s.get(u,params={"symbol":"CON_OP_"+code},timeout=30)
+              try:
+                  j=r.json()
+                  days=(j.get("result") or {}).get("data")
+                  summary=[]
+                  total=0
+                  if isinstance(days,list):
+                      for day in days:
+                          if not isinstance(day,list): continue
+                          total+=len(day)
+                          d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
+                          summary.append((d,len(day)))
+                  print(code,"HTTP",r.status_code,"LEN",len(r.text),"DAYS",summary,"TOTAL",total)
+              except Exception as e:
+                  print(code,"ERR",repr(e),"HEAD",r.text[:300])
