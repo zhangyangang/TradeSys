@@ -1,4 +1,4 @@
-name: Wikitter free page minimal probe
+name: Wikitter registration form probe
 on:
   push:
     branches:
@@ -11,29 +11,25 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch and parse
+      - name: Inspect registration form
         shell: python
         run: |
           import requests,re,html
           from urllib.parse import urljoin
-          u="https://www.wikitter.com/free"
-          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=25)
-          print("HTTP",r.status_code,"LEN",len(r.content),"ENC",r.encoding,"APP",r.apparent_encoding)
-          # Decode both likely charsets
-          for enc in ["utf-8","gb18030",r.apparent_encoding]:
-              try:
-                  t=r.content.decode(enc,errors="ignore")
-              except: continue
-              print("\nENCODING",enc,"TEXT_HEAD",re.sub(r"\s+"," ",re.sub("<[^>]+>"," ",t))[:1200])
-              for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',t,re.I|re.S):
-                  href=urljoin(r.url,html.unescape(m.group(1)))
-                  label=re.sub(r'<[^>]+>',' ',m.group(2))
-                  label=html.unescape(re.sub(r'\s+',' ',label)).strip()
-                  if label or any(k in href.lower() for k in ["product","free","option","etf"]):
-                      print("ANCHOR",label[:180],"->",href)
-              for m in re.finditer(r'(?:url|route|action)\s*[:=]\s*["\']([^"\']+)["\']',t,re.I):
-                  x=html.unescape(m.group(1))
-                  if any(k in x.lower() for k in ["product","category","free","api","index.php"]):
-                      print("SCRIPT_URL",urljoin(r.url,x))
-              for m in re.finditer(r'<script[^>]+src=["\']([^"\']+)["\']',t,re.I):
-                  print("SCRIPT",urljoin(r.url,html.unescape(m.group(1))))
+          s=requests.Session(); s.headers["User-Agent"]="Mozilla/5.0"
+          u="https://www.wikitter.com/index.php?route=account/register"
+          r=s.get(u,timeout=25)
+          print("HTTP",r.status_code,"LEN",len(r.text),"FINAL",r.url)
+          t=r.text
+          for fm in re.finditer(r'<form([^>]*)>(.*?)</form>',t,re.I|re.S):
+              attrs=fm.group(1); body=fm.group(2)
+              print("FORM_ATTR",re.sub(r'\s+',' ',attrs)[:1000])
+              for inp in re.finditer(r'<(?:input|select|textarea)([^>]*)>',body,re.I|re.S):
+                  a=inp.group(1)
+                  name=re.search(r'name=["\']([^"\']+)',a,re.I)
+                  typ=re.search(r'type=["\']([^"\']+)',a,re.I)
+                  val=re.search(r'value=["\']([^"\']*)',a,re.I)
+                  req=("required" in a.lower())
+                  print("FIELD",name.group(1) if name else None,typ.group(1) if typ else None,val.group(1) if val else None,"REQ",req)
+          text=re.sub(r'<[^>]+>',' ',t)
+          print("TEXT",html.unescape(re.sub(r'\s+',' ',text))[:10000])
