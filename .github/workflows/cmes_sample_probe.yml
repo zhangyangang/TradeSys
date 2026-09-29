@@ -1,4 +1,4 @@
-name: Fetch CMES option sample data
+name: Inspect CMES batch protocol
 on:
   push:
     branches:
@@ -6,59 +6,26 @@ on:
 permissions:
   contents: read
 jobs:
-  fetch:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch and extract real 1-minute option sample
-        shell: python
+      - name: Inspect current cmesdata HTTP protocol
+        shell: bash
         run: |
-          import requests, os, base64, io, zipfile, csv, json
-          from pathlib import Path
-          out=Path("out"); out.mkdir(exist_ok=True)
-          params={
-              "data_menu":"国内期权|一分钟级别|一分钟级别",
-              "down_type":"单只获取",
-              "code":"10010156"
-          }
-          r=requests.get(
-              "https://cmes-data.com/api/sample",
-              params=params,
-              headers={"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"},
-              timeout=30
-          )
-          print("HTTP",r.status_code)
-          r.raise_for_status()
-          j=r.json()
-          print("SUCCESS",j.get("success"))
-          d=j["data"]
-          meta={k:v for k,v in d.items() if k!="zip_data"}
-          print("META",json.dumps(meta,ensure_ascii=False))
-          zbytes=base64.b64decode(d["zip_data"])
-          (out/"10010156_sample.zip").write_bytes(zbytes)
-          with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
-              print("ZIP NAMES",z.namelist())
-              for name in z.namelist():
-                  raw=z.read(name)
-                  (out/name).write_bytes(raw)
-                  text=None
-                  for enc in ("utf-8-sig","gb18030","utf-8"):
-                      try:
-                          text=raw.decode(enc)
-                          print("ENC",enc)
+          python -m pip download --no-deps cmesdata==1.2.46 -d /tmp >/dev/null
+          python - <<'PY'
+          import glob,zipfile
+          whl=glob.glob('/tmp/cmesdata-*.whl')[0]
+          z=zipfile.ZipFile(whl)
+          for fn in ['cmesdata/historydata.py','cmesdata/stock.py']:
+              s=z.read(fn).decode('utf-8','ignore')
+              lines=s.splitlines()
+              print('===== '+fn+' =====')
+              for key in ['def _fetch_symbol_list','def _download_file','def _require_token','def login']:
+                  for i,line in enumerate(lines):
+                      if line.startswith(key):
+                          print('--- '+key+' ---')
+                          print('\n'.join(lines[i:i+100]))
                           break
-                      except UnicodeDecodeError:
-                          pass
-                  if text is not None:
-                      lines=text.splitlines()
-                      print("CSV ROWS INCLUDING HEADER",len(lines))
-                      print("HEAD")
-                      print("\n".join(lines[:12]))
-                      print("TAIL")
-                      print("\n".join(lines[-12:]))
-          (out/"metadata.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cmes-10010156-real-1min-sample
-          path: out/
-          retention-days: 1
+          PY
