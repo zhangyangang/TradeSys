@@ -12,9 +12,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           python - <<'PY'
-          import requests,re
-          t=requests.get('https://cmes-data.com/api.html',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-          a=re.findall(r'<script[^>]+src="([^"]+)"',t,re.I)
-          b=re.findall(r"<script[^>]+src='([^']+)'",t,re.I)
-          print('SCRIPTS',a+b)
+          import requests
+          s=requests.get('https://cmes-data.com/js/api-single.js?v=20260918d',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+          lines=s.splitlines()
+          for i,line in enumerate(lines):
+              if any(k in line.lower() for k in ['trial','token','permission','expire','auth/','api/']):
+                  print(f'{i+1}: {line}')
           PY
