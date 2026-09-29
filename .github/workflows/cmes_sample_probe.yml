@@ -1,4 +1,4 @@
-name: Inspect public China option datasets
+name: Inspect public ETF option tick samples
 on:
   push:
     branches:
@@ -14,51 +14,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install -q pandas openpyxl requests
-      - name: Inspect public CSV files
+      - run: python -m pip install -q requests pandas
+      - name: Download and inspect ZIP samples
         shell: python
         run: |
-          import requests, io, pandas as pd, re, os
-          files=[
-            ("Heston_full","https://raw.githubusercontent.com/InsaneHe/Heston_Model/main/%E4%B8%8A%E8%AF%8150ETF%E6%9C%9F%E6%9D%83%E6%95%B0%E6%8D%AE.csv"),
-            ("Heston_small","https://raw.githubusercontent.com/InsaneHe/Heston_Model/main/%E4%B8%8A%E8%AF%8150ETF%E6%9C%9F%E6%9D%83%E6%95%B0%E6%8D%AE1.csv"),
-            ("iVIX_clean_option","https://raw.githubusercontent.com/A-cyan/iVIX/main/clean_data/data_Option.csv"),
-            ("iVIX_raw_table","https://raw.githubusercontent.com/A-cyan/iVIX/main/Option_Time_Series_Data_Table.csv"),
-            ("OptBT_2015","https://raw.githubusercontent.com/blank008/OptionBackTest/master/2015.csv"),
-            ("OptBT_2018","https://raw.githubusercontent.com/blank008/OptionBackTest/master/2018.csv"),
-            ("Caifu_300_tick","https://www.caifushuju.cn/sample/300ETFQIUAN-TICK.zip"),
+          import requests, zipfile, io, os, csv, pandas as pd, re, collections
+          urls=[
+            ("300ETF_TICK","https://www.caifushuju.cn/sample/300ETFQIUAN-TICK.zip"),
+            ("50ETF_TICK","https://www.caifushuju.cn/sample/50qiquan-rixian-5tick.zip"),
+            ("50ETF_5MIN","https://www.caifushuju.cn/sample/50qiquan-rixian-5min.csv.zip"),
           ]
-          for name,url in files:
-              print("\n###",name)
+          for name,url in urls:
+              print("\n###",name,url)
               r=requests.get(url,timeout=120)
-              print("HTTP",r.status_code,"BYTES",len(r.content))
-              if r.status_code!=200: continue
-              df=None
-              for enc in ["utf-8-sig","utf-8","gb18030","gbk"]:
-                  try:
-                      df=pd.read_csv(io.BytesIO(r.content),encoding=enc,low_memory=False)
-                      print("ENC",enc); break
-                  except Exception as e:
-                      last=e
-              if df is None:
-                  print("READ_ERR",repr(last)); continue
-              print("SHAPE",df.shape)
-              print("COLS",list(map(str,df.columns)))
-              print("HEAD")
-              print(df.head(3).to_string(index=False)[:5000])
-              print("TAIL")
-              print(df.tail(3).to_string(index=False)[:5000])
-              # summarize date-like columns
-              for c in df.columns:
-                  cl=str(c).lower()
-                  if any(k in cl for k in ["date","time","日期","时间","交易日"]):
-                      s=df[c]
-                      try:
-                          x=pd.to_datetime(s,errors="coerce")
-                          ok=x.notna().sum()
-                          if ok:
-                              print("DATECOL",c,"PARSED",ok,"MIN",x.min(),"MAX",x.max(),"UNIQUE",x.nunique())
-                      except Exception: pass
-              for cand in ["code","option_code","id","合约编码","symbol","wind_code","sec_code"]:
-                  if cand in df.columns:
-                      print("UNIQUE_ID",cand,df[cand].astype(str).nunique())
+              print("HTTP",r.status_code,"BYTES",len(r.content),"FINAL",r.url)
+              if r.status_code!=200 or not r.content.startswith(b"PK"):
+                  print("HEAD",repr(r.content[:300])); continue
+              z=zipfile.ZipFile(io.BytesIO(r.content))
+              files=[x for x in z.namelist() if not x.endswith("/")]
+              print("FILES",len(files))
+              print("NAMES_HEAD",files[:20])
+              print("NAMES_TAIL",files[-10:])
+              total_lines=0; dates=set(); contracts=set(); headers=collections.Counter()
+              samples=0
+              for fn in files:
+                  b=z.read(fn)
+                  txt=None; enc_used=None
+                  for enc in ("utf-8-sig","gb18030","gbk","utf-8"):
+                      try: txt=b.decode(enc); enc_used=enc; break
+                      except: pass
+                  if txt is None: continue
+                  lines=txt.splitlines()
+                  total_lines += max(0,len(lines)-1)
+                  if lines:
+                      headers[lines[0]] += 1
+                  # scan date/timestamps and contract code filename/content
+                  m=re.search(r'(?:OP)?(\d{8})',fn)
+                  if m: contracts.add(m.group(1))
+                  for line in lines[1:]:
+                      # yyyy-mm-dd or yyyy/mm/dd
+                      mm=re.search(r'(20\d{2}[-/]\d{1,2}[-/]\d{1,2})',line)
+                      if mm: dates.add(mm.group(1).replace("/","-"))
+                  if samples<3:
+                      print("FILE_SAMPLE",fn,"ENC",enc_used,"LINES",len(lines))
+                      print("FIRST3",lines[:3])
+                      print("LAST2",lines[-2:])
+                      samples+=1
+              print("TOTAL_DATA_LINES",total_lines)
+              print("CONTRACTS",len(contracts),sorted(contracts)[:10],sorted(contracts)[-10:])
+              print("DATES",len(dates),sorted(dates)[:10],sorted(dates)[-10:])
+              print("HEADERS",headers.most_common(5))
