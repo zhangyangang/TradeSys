@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install -q pandas
+      - run: python -m pip install -q pandas requests
       - name: Analyze known sample and probe sibling files
         shell: python
         run: |
