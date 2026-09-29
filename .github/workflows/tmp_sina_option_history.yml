@@ -1,0 +1,38 @@
+name: Probe Sina expired option history
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Query Sina historical K-line endpoint
+        shell: python
+        run: |
+          import requests, json, os
+          from urllib.parse import urlencode
+          os.makedirs("sinaout",exist_ok=True)
+          base="https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+          syms=["CON_OP_10010156","sh10010156","10010156"]
+          for sym in syms:
+              for scale in ["1","5","15","30","60"]:
+                  params={"symbol":sym,"scale":scale,"ma":"no","datalen":"5000"}
+                  try:
+                      r=requests.get(base,params=params,headers={"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"},timeout=30)
+                      txt=r.text
+                      print(sym,scale,"status",r.status_code,"len",len(txt),"head",txt[:160].replace("\n"," "))
+                      fn=f"sinaout/{sym.replace('/','_')}_{scale}m.json"
+                      open(fn,"w",encoding="utf-8").write(txt)
+                      if "2025-" in txt:
+                          print("FOUND_2025",sym,scale)
+                  except Exception as e:
+                      print("ERR",sym,scale,repr(e))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sina-expired-option-probe
+          path: sinaout/
+          retention-days: 1
