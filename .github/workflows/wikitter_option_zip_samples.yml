@@ -1,4 +1,4 @@
-name: Inspect public ETF option 1m ZIP samples
+name: Summarize public ETF option 1m ZIP samples
 on:
   push:
     branches:
@@ -14,11 +14,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install -q requests
-      - name: Download inspect ZIPs
+      - run: python -m pip install -q pandas requests
+      - name: Summarize 1m files
         shell: python
         run: |
-          import requests,zipfile,io,hashlib,csv,re
+          import requests,zipfile,io,pandas as pd
           urls=[
             "https://www.wikitter.com/sample/stockonmin2ivlx.zip",
             "https://www.wikitter.com/sample/stockonmin2ivmid.zip",
@@ -27,26 +27,23 @@ jobs:
           ]
           s=requests.Session(); s.headers["User-Agent"]="Mozilla/5.0"
           for u in urls:
-              print("\n### URL",u)
               r=s.get(u,timeout=90)
-              print("HTTP",r.status_code,"LEN",len(r.content),"TYPE",r.headers.get("content-type"),"SHA",hashlib.sha256(r.content).hexdigest()[:16])
-              try:
-                  z=zipfile.ZipFile(io.BytesIO(r.content))
-              except Exception as e:
-                  print("ZIP_ERR",type(e).__name__,str(e)); continue
-              infos=[x for x in z.infolist() if not x.is_dir()]
-              print("FILES",len(infos),"TOTAL_UNCOMP",sum(x.file_size for x in infos))
-              for x in infos[:100]:
-                  print("FILE",x.filename,x.file_size)
-              # inspect first up to 10 csv/text files
-              for x in infos[:10]:
+              z=zipfile.ZipFile(io.BytesIO(r.content))
+              files=[x for x in z.infolist() if "1min" in x.filename.lower() and x.filename.lower().endswith(".csv")]
+              print("\nARCHIVE",u,"HTTP",r.status_code,"BYTES",len(r.content),"ONE_MIN_FILES",len(files))
+              for x in files:
                   b=z.read(x)
-                  print("\nDATAFILE",x.filename,"SIZE",len(b))
-                  t=None
-                  for enc in ("utf-8-sig","gb18030","utf-16","latin1"):
-                      try:
-                          t=b[:8000].decode(enc); used=enc; break
-                      except: pass
-                  if t is not None:
-                      print("ENC",used)
-                      print("HEAD",repr(t[:2500]))
+                  txt=b.decode("utf-8-sig",errors="replace")
+                  try: df=pd.read_csv(io.StringIO(txt))
+                  except Exception as e:
+                      print("PARSE_ERR",x.filename,type(e).__name__,str(e)); continue
+                  # date+time
+                  if "日期" in df and "时间" in df:
+                      dt=pd.to_datetime(df["日期"].astype(str)+" "+df["时间"].astype(str),errors="coerce")
+                  elif "date" in df:
+                      dt=pd.to_datetime(df["date"],errors="coerce")
+                  else: dt=pd.Series(pd.NaT,index=df.index)
+                  ccol="合约编码" if "合约编码" in df else ("code" if "code" in df else None)
+                  print("FILE",x.filename,"ROWS",len(df),"COLS",len(df.columns),"MIN",dt.min(),"MAX",dt.max(),"DAYS",dt.dt.date.nunique(),"CONTRACTS",df[ccol].astype(str).nunique() if ccol else None)
+                  if ccol: print("CODES",df[ccol].astype(str).drop_duplicates().tolist()[:20])
+                  print("FIELDS",list(df.columns))
