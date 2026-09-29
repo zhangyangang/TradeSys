@@ -1,0 +1,76 @@
+name: Temporary ETF option pytdxdata fetch
+
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-pytdxdata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install current pytdxdata
+        run: python -m pip install -U pytdxdata pandas
+      - name: Fetch 2025 expired ETF option
+        shell: python
+        run: |
+          import asyncio, os, pandas as pd, traceback
+          from dataclasses import asdict
+          from pytdxdata import TdxData
+          from pytdxdata.models import ExMarket, KlinePeriod
+          os.makedirs("out3",exist_ok=True)
+          async def main():
+              async with TdxData() as td:
+                  for period,name,count in [
+                      (KlinePeriod.MIN_1,"1min",20800),
+                      (KlinePeriod.MIN_5,"5min",12000),
+                      (KlinePeriod.MIN_15,"15min",6000),
+                      (KlinePeriod.MIN_30,"30min",4000),
+                  ]:
+                      try:
+                          bars=await td.get_kline(ExMarket.SH_STOCK_OPTION,"10008833",period,count=count)
+                          print("PERIOD",name,"TOTAL",len(bars))
+                          rows=[]
+                          for b in bars:
+                              d=asdict(b) if hasattr(b,"__dataclass_fields__") else dict(vars(b))
+                              dt=getattr(b,"datetime",None)
+                              if dt is not None: d["datetime"]=str(dt)
+                              rows.append(d)
+                          df=pd.DataFrame(rows)
+                          print("COLS",df.columns.tolist())
+                          if "datetime" in df.columns:
+                              dts=pd.to_datetime(df["datetime"],errors="coerce")
+                          elif set(["year","month","day"]).issubset(df.columns):
+                              dts=pd.to_datetime(dict(year=df.year,month=df.month,day=df.day,
+                                  hour=df.get("hour",0),minute=df.get("minute",0)),errors="coerce")
+                              df["datetime"]=dts
+                          else:
+                              dts=pd.Series(pd.NaT,index=df.index)
+                          out=df[(dts>="2025-01-01")&(dts<"2026-01-01")].copy()
+                          print("2025",name,"ROWS",len(out))
+                          if len(out):
+                              print("FIRST")
+                              print(out.head(5).to_string(index=False))
+                              print("LAST")
+                              print(out.tail(5).to_string(index=False))
+                              out.to_csv(f"out3/10008833_500ETF_call_202509_5.5_{name}_2025.csv",index=False,encoding="utf-8-sig")
+                      except Exception as e:
+                          print("ERROR",name,repr(e))
+                          traceback.print_exc()
+          asyncio.run(main())
+      - name: Show files
+        run: |
+          ls -lh out3 || true
+          for f in out3/*.csv; do echo "=== $f ==="; head -4 "$f"; tail -4 "$f"; done || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: etf-option-pytdxdata-2025
+          path: out3/
+          if-no-files-found: warn
+          retention-days: 1
