@@ -1,4 +1,4 @@
-name: Probe direct option 1m sample files
+name: Analyze and expand option sample probes
 on:
   push:
     branches:
@@ -8,33 +8,58 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Probe direct URLs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -q pandas
+      - name: Analyze known sample and probe sibling files
         shell: python
         run: |
-          import requests, hashlib, re
-          urls = [
-            "http://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
-            "https://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
-            "https://od.lk/d/NTNfMTMwMjc0OTVf/ivf50etfo1min.csv",
-            "https://od.lk/d/NTNfMTE2NDQ2NTZf/50O1minlx.csv",
+          import requests, io, pandas as pd, hashlib, zipfile, re
+          s=requests.Session(); s.headers["User-Agent"]="Mozilla/5.0"
+          known="https://www.caifushuju.cn/sample/50qiquan-rixian-1min.csv"
+          r=s.get(known,timeout=30); b=r.content
+          txt=b.decode("gb18030",errors="replace")
+          lines=txt.splitlines()
+          print("KNOWN_HTTP",r.status_code,"BYTES",len(b),"LINES",len(lines))
+          # Data starts after 3 descriptive/header lines
+          df=pd.read_csv(io.StringIO("\n".join(lines[1:])),skiprows=[1])
+          print("KNOWN_COLS",list(df.columns))
+          print("KNOWN_ROWS",len(df))
+          dt=pd.to_datetime(df["date"],errors="coerce")
+          print("KNOWN_MINMAX",dt.min(),dt.max())
+          print("KNOWN_DAYS",dt.dt.date.nunique())
+          print("KNOWN_CONTRACTS",df["code"].astype(str).nunique())
+          print("KNOWN_CODES",df["code"].astype(str).drop_duplicates().tolist()[:100])
+          print("KNOWN_ROWS_PER_CODE_TOP",df.groupby("code").size().sort_values(ascending=False).head(10).to_dict())
+          urls=[
+            "https://www.caifushuju.cn/sample/50qiquan-rixian-5tick.zip",
+            "https://www.caifushuju.cn/sample/50qiquan-rixian-5min.csv.zip",
+            "https://www.caifushuju.cn/sample/300ETFQIUAN-TICK.zip",
+            "https://www.caifushuju.cn/sample/300ETFqiquanRI.csv",
+            "https://www.caifushuju.cn/sample/300ETFqiquan-rixian-1min.csv",
+            "https://www.caifushuju.cn/sample/300qiquan-rixian-1min.csv",
+            "https://www.caifushuju.cn/sample/300ETFQIUAN-1min.csv",
+            "https://www.caifushuju.cn/sample/300qiquan-1min.csv",
           ]
-          s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0"})
           for u in urls:
-              print("\nURL",u)
               try:
-                  r=s.get(u,timeout=25,allow_redirects=True)
-                  print("HTTP",r.status_code,"FINAL",r.url,"LEN",len(r.content),"TYPE",r.headers.get("content-type"))
-                  print("SHA",hashlib.sha256(r.content).hexdigest()[:20])
-                  head=r.content[:2000]
-                  for enc in ["utf-8","gb18030","latin1"]:
-                      try:
-                          txt=head.decode(enc)
-                          print("HEAD",enc,repr(txt[:1200]))
-                          break
-                      except: pass
+                  rr=s.get(u,timeout=25,allow_redirects=True)
+                  ct=rr.headers.get("content-type","")
+                  print("\nPROBE",u,"HTTP",rr.status_code,"FINAL",rr.url,"BYTES",len(rr.content),"TYPE",ct,"SHA",hashlib.sha256(rr.content).hexdigest()[:12])
+                  if rr.status_code==200 and len(rr.content)>100:
+                      if rr.content[:2]==b"PK":
+                          try:
+                              z=zipfile.ZipFile(io.BytesIO(rr.content))
+                              print("ZIP_FILES",[(x.filename,x.file_size) for x in z.infolist()[:20]])
+                              if z.infolist():
+                                  hb=z.read(z.infolist()[0])[:1200]
+                                  print("ZIP_HEAD",repr(hb.decode("gb18030",errors="replace")[:900]))
+                          except Exception as e: print("ZIP_ERR",type(e).__name__,str(e))
+                      else:
+                          print("HEAD",repr(rr.content[:1200].decode("gb18030",errors="replace")))
               except Exception as e:
-                  print("ERR",type(e).__name__,str(e)[:500])
+                  print("ERR",u,type(e).__name__,str(e)[:300])
