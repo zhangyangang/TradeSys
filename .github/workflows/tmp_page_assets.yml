@@ -12,10 +12,18 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           python - <<'PY'
-          import requests
-          s=requests.get('https://cmes-data.com/js/api-single.js?v=20260918d',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-          lines=s.splitlines()
-          for i,line in enumerate(lines):
-              if any(k in line.lower() for k in ['trial','token','permission','expire','auth/','api/']):
-                  print(f'{i+1}: {line}')
+          import requests,re,urllib.parse
+          base='https://cmes-data.com/'
+          t=requests.get(base+'download.html',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+          srcs=re.findall(r'<script[^>]+src="([^"]+)"',t,re.I)+re.findall(r"<script[^>]+src='([^']+)'",t,re.I)
+          print('SCRIPTS',srcs)
+          for src in srcs:
+              u=urllib.parse.urljoin(base,src)
+              s=requests.get(u,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+              print('\n===== '+u+' =====')
+              lines=s.splitlines()
+              for i,line in enumerate(lines):
+                  lo=line.lower()
+                  if any(k in lo for k in ['sample','preview','demo','查看样例','样例','/api/','down_file','data_menu','interface_symbol']):
+                      print(f'{i+1}: {line[:2000]}')
           PY
