@@ -1,0 +1,40 @@
+name: Probe direct option 1m sample files
+on:
+  push:
+    branches:
+      - "tmp/cmes-sample-probe"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe direct URLs
+        shell: python
+        run: |
+          import requests, hashlib, re
+          urls = [
+            "http://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
+            "https://caifushuju.cn/sample/50qiquan-rixian-1min.csv",
+            "https://od.lk/d/NTNfMTMwMjc0OTVf/ivf50etfo1min.csv",
+            "https://od.lk/d/NTNfMTE2NDQ2NTZf/50O1minlx.csv",
+          ]
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0"})
+          for u in urls:
+              print("\nURL",u)
+              try:
+                  r=s.get(u,timeout=25,allow_redirects=True)
+                  print("HTTP",r.status_code,"FINAL",r.url,"LEN",len(r.content),"TYPE",r.headers.get("content-type"))
+                  print("SHA",hashlib.sha256(r.content).hexdigest()[:20])
+                  head=r.content[:2000]
+                  for enc in ["utf-8","gb18030","latin1"]:
+                      try:
+                          txt=head.decode(enc)
+                          print("HEAD",enc,repr(txt[:1200]))
+                          break
+                      except: pass
+              except Exception as e:
+                  print("ERR",type(e).__name__,str(e)[:500])
