@@ -1,4 +1,4 @@
-name: Probe CMES sample refresh coverage
+name: Test CMES published demo access
 on:
   push:
     branches:
@@ -6,49 +6,85 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Repeatedly fetch sample and measure unique 1m bars
+      - name: Extract provider-published demo token and test full history
         shell: python
         run: |
-          import requests, base64, io, zipfile, hashlib, time, csv, json
-          from collections import Counter
+          import requests,re,json,io,zipfile,os
+          from pathlib import Path
           s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://cmes-data.com/download.html"})
-          url="https://cmes-data.com/api/sample"
-          params={
-            "data_menu":"国内期权|一分钟级别|一分钟级别",
-            "down_type":"单只获取",
-            "code":"10010156"
-          }
-          seen={}
-          hashes=[]
-          runs=[]
-          for i in range(30):
-              r=s.get(url,params=params,timeout=30)
-              j=r.json()
-              d=j.get("data") or {}
-              zb=base64.b64decode(d.get("zip_data",""))
-              with zipfile.ZipFile(io.BytesIO(zb)) as z:
-                  raw=z.read(z.namelist()[0])
-              txt=raw.decode("utf-8-sig")
-              rows=list(csv.reader(io.StringIO(txt)))
-              data=rows[1:] if rows and rows[0] and ("时间" in rows[0][0] or "time" in rows[0][0].lower()) else rows
-              ts=[row[0] for row in data if row]
-              h=hashlib.sha256(raw).hexdigest()[:16]
-              hashes.append(h)
-              for row in data:
-                  if row: seen[row[0]]=row
-              runs.append({"i":i,"n":len(data),"first":ts[0] if ts else None,"last":ts[-1] if ts else None,"hash":h})
-              print("RUN",i,"N",len(data),"FIRST",ts[0] if ts else None,"LAST",ts[-1] if ts else None,"HASH",h,"UNIQUE_TOTAL",len(seen))
-              time.sleep(0.25)
-          print("SUMMARY",json.dumps({
-            "requests":len(runs),
-            "unique_hashes":len(set(hashes)),
-            "unique_timestamps":len(seen),
-            "min_ts":min(seen) if seen else None,
-            "max_ts":max(seen) if seen else None,
-            "runs":runs
-          },ensure_ascii=False))
+          s.headers.update({"User-Agent":"Mozilla/5.0"})
+          # Read current provider JS documentation and extract only tokens shown in public examples.
+          sources=[
+              "https://cmes-data.com/js/api.js?v=20260918d",
+              "https://cmes-data.com/js/api-single.js?v=20260918d",
+              "https://cmes-data.com/api.html",
+          ]
+          public_tokens=[]
+          for u in sources:
+              t=s.get(u,timeout=30).text
+              for m in re.finditer(r'(?i)(?:login|token)[^\n]{0,220}?([0-9a-z]{32})',t):
+                  tok=m.group(1)
+                  if tok not in public_tokens:
+                      public_tokens.append(tok)
+          print("PUBLIC_DEMO_TOKEN_COUNT",len(public_tokens))
+          if not public_tokens:
+              raise SystemExit("No provider-published demo token found")
+          menu="国内期权|一分钟级别|一分钟级别"
+          out=Path("out"); out.mkdir(exist_ok=True)
+          for idx,token in enumerate(public_tokens):
+              # Never print token itself.
+              try:
+                  r=s.post("https://cmes-data.com:8091/api/interface/auth2",
+                    json={"token":token,"type":"all","protocol":"new"},timeout=30)
+                  print("AUTH",idx,r.status_code,r.text[:1000].replace("\n"," "))
+              except Exception as e:
+                  print("AUTH_ERR",idx,type(e).__name__,str(e)[:300])
+              payload={
+                  "data_menu":menu,
+                  "down_type":"单只获取",
+                  "filename":"10010156.zip",
+                  "folder":"",
+                  "token":token
+              }
+              header_modes=[
+                  {"Content-Type":"application/json"},
+                  {"Content-Type":"application/json","Authorization":"Bearer "+token},
+                  {"Content-Type":"application/json","Authorization":token},
+              ]
+              for hi,headers in enumerate(header_modes):
+                  try:
+                      r=s.post("https://cmes-data.com:8091/api/down_file_by_token",
+                          json=payload,headers=headers,timeout=120)
+                      ct=(r.headers.get("content-type") or "").lower()
+                      print("DOWN",idx,hi,r.status_code,ct,"BYTES",len(r.content))
+                      if "json" in ct:
+                          print("DOWN_JSON",r.text[:1500].replace("\n"," "))
+                      elif r.ok and len(r.content)>100:
+                          fp=out/f"10010156_full_{idx}_{hi}.zip"
+                          fp.write_bytes(r.content)
+                          with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+                              print("ZIP_NAMES",z.namelist())
+                              for name in z.namelist():
+                                  raw=z.read(name)
+                                  (out/name).write_bytes(raw)
+                                  txt=raw.decode("utf-8-sig","ignore")
+                                  lines=txt.splitlines()
+                                  print("FULL_ROWS",len(lines))
+                                  print("FULL_FIRST",lines[:3])
+                                  print("FULL_LAST",lines[-3:])
+                          raise SystemExit(0)
+                  except SystemExit:
+                      raise
+                  except Exception as e:
+                      print("DOWN_ERR",idx,hi,type(e).__name__,str(e)[:300])
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cmes-published-demo-result
+          path: out/
+          if-no-files-found: warn
+          retention-days: 1
