@@ -1,4 +1,4 @@
-name: Probe Wikitter free ETF option 1m package
+name: Probe cheap full ETF option 1m listing samples
 on:
   push:
     branches:
@@ -8,54 +8,29 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch free listing and product pages
+      - name: Inspect listing HTML around option package
         shell: python
         run: |
-          import requests,re,html,json
+          import requests,re,html
           from urllib.parse import urljoin
-          s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0"})
-          urls=["https://www.wikitter.com/free","https://www.wikitter.com/all?limit=75&order=DESC&page=2&sort=p.price"]
-          seen=set()
-          for u in urls:
-              try:
-                  r=s.get(u,timeout=40)
-                  print("\nPAGE",u,"HTTP",r.status_code,"LEN",len(r.text),"FINAL",r.url)
-                  text=r.text
-                  for m in re.finditer(r'href=["\']([^"\']+)["\']',text,re.I):
-                      href=html.unescape(m.group(1))
-                      low=href.lower()
-                      if any(k in low for k in ["free","1min","minute","etf-opt","opt-1"]):
-                          full=urljoin(r.url,href)
-                          if full not in seen:
-                              seen.add(full); print("LINK",full)
-                  for pat in ["ETF期权免费1分钟数据","588080","159919","￥0.00","product_id","add-to-cart","checkout","cart"]:
-                      if pat in text:
-                          print("HAS",pat)
-                  # print snippets around title
-                  idx=text.find("ETF期权免费1分钟数据")
-                  if idx>=0: print("SNIP",re.sub(r'\s+',' ',text[max(0,idx-1200):idx+2500])[:5000])
-              except Exception as e:
-                  print("ERR",u,type(e).__name__,str(e))
-          # Fetch candidate links
-          for u in list(seen):
-              if u.startswith("https://www.wikitter.com/"):
-                  try:
-                      r=s.get(u,timeout=30)
-                      if "ETF期权免费1分钟数据" in r.text or "588080" in r.text:
-                          print("\nCANDIDATE",u,"HTTP",r.status_code,"LEN",len(r.text))
-                          text=r.text
-                          # forms
-                          for fm in re.finditer(r'<form[^>]*action=["\']?([^"\' >]+)[^>]*>(.*?)</form>',text,re.I|re.S):
-                              action=urljoin(r.url,html.unescape(fm.group(1)))
-                              body=fm.group(2)
-                              print("FORM",action,re.sub(r'\s+',' ',body)[:3000])
-                          for m in re.finditer(r'href=["\']([^"\']+)["\']',text,re.I):
-                              href=html.unescape(m.group(1))
-                              if any(k in href.lower() for k in ["od.lk","download","csv","zip","free"]):
-                                  print("DOWNLOADISH",urljoin(r.url,href))
-                  except Exception as e:
-                      print("CAND_ERR",u,type(e).__name__,str(e))
+          u="https://tushare.indevs.in/quant/trading-data/"
+          r=requests.get(u,headers={"User-Agent":"Mozilla/5.0"},timeout=40)
+          print("HTTP",r.status_code,"LEN",len(r.text),"FINAL",r.url)
+          t=r.text
+          needles=["19,636","A股ETF期权历史1分钟","RQData A股ETF期权历史1分钟","真实分钟数据样例"]
+          for needle in needles:
+              i=t.find(needle)
+              print("\nNEEDLE",needle,"IDX",i)
+              if i>=0:
+                  sn=t[max(0,i-8000):i+12000]
+                  # all href/src and plaintext URLs near section
+                  for m in re.finditer(r'(?:href|src)=["\']([^"\']+)["\']',sn,re.I):
+                      x=urljoin(r.url,html.unescape(m.group(1)))
+                      print("LINK",x)
+                  for x in re.findall(r'https?://[^\s<>"\']+',sn):
+                      print("PLAINURL",html.unescape(x.rstrip(").,;")))
+                  plain=html.unescape(re.sub(r'<[^>]+>',' ',sn))
+                  print("TEXT",re.sub(r'\s+',' ',plain)[:12000])
