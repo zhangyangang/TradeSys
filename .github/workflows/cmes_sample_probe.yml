@@ -1,4 +1,4 @@
-name: Probe Sina historical window params
+name: Probe BigQuant option 1m guest access
 on:
   push:
     branches:
@@ -8,37 +8,45 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Test date-like parameters on public five-day endpoint
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install BigQuant SDK
+        run: |
+          python -m pip install -q --extra-index-url https://pypi.bigquant.com/simple/ bigquant pandas pyarrow || python -m pip install -q -i https://pypi.bigquant.com/simple/ bigquant pandas pyarrow
+      - name: Probe guest query
         shell: python
         run: |
-          import requests,json,hashlib
-          s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://stock.finance.sina.com.cn/"})
-          u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
-          sym="CON_OP_10010156"
-          cases=[
-            {},
-            {"date":"2025-11-13"},
-            {"date":"2025-10-31"},
-            {"end_date":"2025-11-13"},
-            {"endDate":"2025-11-13"},
-            {"trade_date":"2025-11-13"},
-            {"start_date":"2025-11-10","end_date":"2025-11-14"},
-            {"from":"2025-11-10","to":"2025-11-14"},
-          ]
-          for i,extra in enumerate(cases):
-              p={"symbol":sym}; p.update(extra)
-              r=s.get(u,params=p,timeout=30)
-              h=hashlib.sha256(r.content).hexdigest()[:16]
+          import traceback,sys
+          try:
+              import bigquant
+              print("BIGQUANT",getattr(bigquant,"__version__",None),dir(bigquant)[:80])
+          except Exception as e:
+              print("IMPORT_ERR",type(e).__name__,str(e))
+              raise
+          try:
+              print("WHOAMI",bigquant.whoami())
+          except Exception as e:
+              print("WHOAMI_ERR",type(e).__name__,str(e)[:1000])
+          try:
+              from bigquant import dai
+          except Exception:
               try:
-                  j=r.json(); days=(j.get("result") or {}).get("data") or []
-                  dates=[]
-                  for day in days:
-                      if isinstance(day,list) and day:
-                          d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
-                          dates.append(d)
-                  print("CASE",i,extra,"STATUS",r.status_code,"HASH",h,"DATES",dates,"LEN",len(r.text))
+                  from bigquant.api import dai
               except Exception as e:
-                  print("CASE",i,extra,"ERR",repr(e),"HASH",h,"HEAD",r.text[:300])
+                  print("DAI_IMPORT_ERR",type(e).__name__,str(e)); raise
+          queries=[
+              ("schema","select * from cn_option_bar1m limit 1",True,{}),
+              ("contract","select date,instrument,open,high,low,close,volume,amount,open_interest from cn_option_bar1m where instrument like '10010156%' and date >= '2025-09-29' and date <= '2025-11-26' order by date limit 20",False,{"date":["2025-09-29","2025-11-26"]}),
+          ]
+          for name,sql,full,filters in queries:
+              try:
+                  r=dai.query(sql,full_db_scan=full,filters=filters)
+                  df=r.df()
+                  print("QUERY_OK",name,df.shape)
+                  print(df.head(20).to_string())
+              except Exception as e:
+                  print("QUERY_ERR",name,type(e).__name__,str(e)[:3000])
