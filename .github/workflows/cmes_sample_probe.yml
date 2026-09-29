@@ -1,4 +1,4 @@
-name: Probe earliest SZSE ETF option codes on Sina
+name: Probe TDX option 1m anonymous access
 on:
   push:
     branches:
@@ -8,28 +8,47 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Query early Shenzhen ETF option codes
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install tdxaidata
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q tdxaidata -i https://pypi.tuna.tsinghua.edu.cn/simple
+      - name: Test option historical minute access without key
         shell: python
         run: |
-          import requests
-          s=requests.Session()
-          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
-          u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
-          for code in ["90000001","90000002","90000010","90000291"]:
-              r=s.get(u,params={"symbol":"CON_OP_"+code},timeout=30)
+          import os, json, traceback, sys
+          print("PY",sys.version)
+          try:
+              import tdxaidata
+              print("TDXAIDATA",getattr(tdxaidata,"__version__",None),tdxaidata)
+              from tdxaidata import tqs
+          except Exception as e:
+              print("IMPORT_ERR",type(e).__name__,str(e))
+              raise
+          tests=[
+              ("10010156.SH","1m","2025-11-20","2025-11-26"),
+              ("10001313.SH","1m","2018-12-20","2018-12-26"),
+              ("90005168.SZ","1m","2025-04-17","2025-04-23"),
+              ("510500.SH","1m","2025-11-20","2025-11-26"),
+          ]
+          for code,period,start,end in tests:
+              print("\nTEST",code,period,start,end)
               try:
-                  j=r.json()
-                  days=(j.get("result") or {}).get("data")
-                  summary=[]
-                  total=0
-                  if isinstance(days,list):
-                      for day in days:
-                          if not isinstance(day,list): continue
-                          total+=len(day)
-                          d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
-                          summary.append((d,len(day)))
-                  print(code,"HTTP",r.status_code,"LEN",len(r.text),"DAYS",summary,"TOTAL",total)
+                  r=tqs.get_market_data(
+                      field_list=["Open","High","Low","Close","Volume","Amount"],
+                      stock_list=[code],
+                      period=period,
+                      start_time=start,
+                      end_time=end,
+                  )
+                  print("TYPE",type(r).__name__)
+                  s=str(r)
+                  print("RESULT",s[:5000])
               except Exception as e:
-                  print(code,"ERR",repr(e),"HEAD",r.text[:300])
+                  print("ERR",type(e).__name__,str(e)[:3000])
+                  traceback.print_exc(limit=2)
