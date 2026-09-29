@@ -1,0 +1,39 @@
+name: Inspect CMES option API signatures
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print relevant source
+        shell: bash
+        run: |
+          python -m pip download --no-deps cmesdata==1.2.46 -d /tmp >/dev/null
+          python - <<'PY'
+          import zipfile, glob
+          z=zipfile.ZipFile(glob.glob('/tmp/cmesdata-*.whl')[0])
+          for fn in ['cmesdata/__init__.py','cmesdata/historydata.py','cmesdata/_batch_menu_map.py']:
+              s=z.read(fn).decode('utf-8','ignore')
+              print("\n===== "+fn+" =====")
+              if fn.endswith('__init__.py'):
+                  print(s)
+              elif fn.endswith('_batch_menu_map.py'):
+                  for line in s.splitlines():
+                      if 'option' in line.lower():
+                          print(line)
+              else:
+                  lines=s.splitlines()
+                  keys=['def get_historical_data','def get_daily_pack','def get_symbol_list','def _fetch_historical_data_core','def _download_named_data','def _fetch_symbol_list']
+                  for key in keys:
+                      for i,line in enumerate(lines):
+                          if line.startswith(key):
+                              print("\n--- "+key+" ---")
+                              print("\n".join(lines[i:i+80]))
+                              break
+          PY
