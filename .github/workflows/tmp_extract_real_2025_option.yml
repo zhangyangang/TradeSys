@@ -1,0 +1,78 @@
+name: Extract real 2025 ETF option 5m contract
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download public 500ETF option parquet and extract one 2025 contract
+        shell: bash
+        run: |
+          set -e
+          mkdir -p realout
+          curl -L --fail --retry 3 -o /tmp/opt.parquet https://raw.githubusercontent.com/Uwater1/option-longterm/main/data/500ETF_historical_prices_5m.parquet
+          curl -L --fail --retry 3 -o /tmp/inst.parquet https://raw.githubusercontent.com/Uwater1/option-longterm/main/data/500ETF_instruments.parquet
+          ls -lh /tmp/opt.parquet /tmp/inst.parquet
+          python - <<'PY'
+          import pandas as pd, json, os
+          p=pd.read_parquet('/tmp/opt.parquet')
+          i=pd.read_parquet('/tmp/inst.parquet')
+          print("PRICE COLS",p.columns.tolist())
+          print("PRICE SHAPE",p.shape)
+          print("PRICE HEAD",p.head(3).to_dict('records'))
+          print("INST COLS",i.columns.tolist())
+          print("INST SHAPE",i.shape)
+          # identify datetime
+          dtcol=next((c for c in ['datetime','date','trading_datetime','timestamp'] if c in p.columns),None)
+          if dtcol is None:
+              for c in p.columns:
+                  try:
+                      x=pd.to_datetime(p[c],errors='coerce')
+                      if x.notna().mean()>0.9:
+                          dtcol=c; break
+                  except: pass
+          if dtcol is None: raise RuntimeError("No datetime column")
+          dt=pd.to_datetime(p[dtcol],errors='coerce')
+          p25=p[(dt>='2025-01-01')&(dt<'2026-01-01')].copy()
+          p25['_dt']=dt[(dt>='2025-01-01')&(dt<'2026-01-01')].values
+          print("2025 rows",len(p25),"range",p25['_dt'].min(),p25['_dt'].max())
+          idcol=next((c for c in ['order_book_id','contract_id','symbol','code'] if c in p25.columns),None)
+          if idcol is None: raise RuntimeError("No contract id column")
+          cnt=p25.groupby(idcol).size().sort_values(ascending=False)
+          print("TOP CONTRACTS",cnt.head(20).to_dict())
+          cid=str(cnt.index[0])
+          out=p25[p25[idcol].astype(str)==cid].copy().sort_values('_dt')
+          # metadata
+          meta={}
+          iid=next((c for c in ['order_book_id','contract_id','symbol','code'] if c in i.columns),None)
+          if iid:
+              m=i[i[iid].astype(str)==cid]
+              if len(m): meta={k:(str(v) if not pd.isna(v) else None) for k,v in m.iloc[0].to_dict().items()}
+          # clean
+          if dtcol!='datetime': out['datetime']=out['_dt']
+          out=out.drop(columns=['_dt'],errors='ignore')
+          fn=f"realout/{cid.replace('.','_')}_2025_5min.csv"
+          out.to_csv(fn,index=False,encoding='utf-8-sig')
+          summary={
+              'contract_id':cid,'rows':len(out),
+              'start':str(pd.to_datetime(out['datetime'] if 'datetime' in out else out[dtcol]).min()),
+              'end':str(pd.to_datetime(out['datetime'] if 'datetime' in out else out[dtcol]).max()),
+              'columns':out.columns.tolist(),'metadata':meta,'source_repo':'Uwater1/option-longterm',
+              'source_file':'data/500ETF_historical_prices_5m.parquet'
+          }
+          open('realout/summary.json','w',encoding='utf-8').write(json.dumps(summary,ensure_ascii=False,indent=2))
+          print("SUMMARY",json.dumps(summary,ensure_ascii=False))
+          print("FIRST",out.head(10).to_string(index=False))
+          print("LAST",out.tail(10).to_string(index=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-2025-etf-option-5min
+          path: realout/
+          retention-days: 1
