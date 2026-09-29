@@ -1,4 +1,4 @@
-name: Probe several expired ETF option contracts
+name: Probe Sina SZSE ETF option minute history
 on:
   push:
     branches:
@@ -10,37 +10,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Query Sina five-day minute history
+      - name: Query Shenzhen ETF option codes on Sina
         shell: python
         run: |
-          import requests, json, statistics
+          import requests, json
           s=requests.Session()
           s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://finance.sina.com.cn/"})
           u="https://stock.finance.sina.com.cn/futures/api/openapi.php/StockOptionDaylineService.getFiveDayLine"
-          codes=["10001313","10001979","10009633","10010155","10010156"]
-          for code in codes:
-              r=s.get(u,params={"symbol":"CON_OP_"+code},timeout=30)
-              print("\nCODE",code,"HTTP",r.status_code,"LEN",len(r.text))
-              try:
-                  j=r.json()
-                  days=(j.get("result") or {}).get("data")
-                  if not isinstance(days,list):
-                      print("NO_DATA",str(days)[:500]); continue
-                  summary=[]
-                  total=0
-                  for di,day in enumerate(days):
-                      if not isinstance(day,list):
-                          continue
-                      total+=len(day)
-                      d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
-                      first=day[0].get("i") if day and isinstance(day[0],dict) else None
-                      last=day[-1].get("i") if day and isinstance(day[-1],dict) else None
-                      summary.append((d,len(day),first,last))
-                  print("DAYS",summary)
-                  print("TOTAL_BARS",total)
-                  if days and isinstance(days[0],list) and days[0]:
-                      print("FIRST_ROW",days[0][0])
-                  if days and isinstance(days[-1],list) and days[-1]:
-                      print("LAST_ROW",days[-1][-1])
-              except Exception as e:
-                  print("PARSE_ERR",type(e).__name__,str(e)[:500],"HEAD",r.text[:1000])
+          codes=[
+            ("90000291","SZSE 300ETF 2020"),
+            ("90001345","SZSE 500ETF 2022"),
+            ("90005168","ChiNext ETF 2025"),
+          ]
+          prefixes=["CON_OP_","CON_SO_",""]
+          for code,label in codes:
+              print("\n###",code,label)
+              for pref in prefixes:
+                  sym=pref+code
+                  try:
+                      r=s.get(u,params={"symbol":sym},timeout=30)
+                      print("SYM",sym,"HTTP",r.status_code,"LEN",len(r.text))
+                      try:
+                          j=r.json()
+                          days=(j.get("result") or {}).get("data")
+                          if isinstance(days,list):
+                              summary=[]
+                              total=0
+                              for day in days:
+                                  if not isinstance(day,list): continue
+                                  total += len(day)
+                                  d=next((x.get("d") for x in day if isinstance(x,dict) and x.get("d")),None)
+                                  first=day[0].get("i") if day and isinstance(day[0],dict) else None
+                                  last=day[-1].get("i") if day and isinstance(day[-1],dict) else None
+                                  summary.append((d,len(day),first,last))
+                              print("DAYS",summary,"TOTAL",total)
+                              if total:
+                                  print("FIRST",days[0][0])
+                                  print("LAST",days[-1][-1])
+                          else:
+                              print("DATA",str(days)[:300])
+                      except Exception as e:
+                          print("JSON_ERR",type(e).__name__,str(e)[:300],"HEAD",r.text[:500])
+                  except Exception as e:
+                      print("REQ_ERR",sym,type(e).__name__,str(e)[:300])
