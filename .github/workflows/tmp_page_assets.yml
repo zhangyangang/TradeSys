@@ -12,18 +12,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           python - <<'PY'
-          import requests,re,urllib.parse
-          base='https://cmes-data.com/'
-          t=requests.get(base+'download.html',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-          srcs=re.findall(r'<script[^>]+src="([^"]+)"',t,re.I)+re.findall(r"<script[^>]+src='([^']+)'",t,re.I)
-          print('SCRIPTS',srcs)
-          for src in srcs:
-              u=urllib.parse.urljoin(base,src)
-              s=requests.get(u,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-              print('\n===== '+u+' =====')
-              lines=s.splitlines()
-              for i,line in enumerate(lines):
-                  lo=line.lower()
-                  if any(k in lo for k in ['sample','preview','demo','查看样例','样例','/api/','down_file','data_menu','interface_symbol']):
-                      print(f'{i+1}: {line[:2000]}')
+          import requests
+          s=requests.get('https://cmes-data.com/js/download.js?v=20260929',headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+          lines=s.splitlines()
+          for a,b in [(6450,6665),(2650,3750)]:
+              print(f'===== LINES {a}-{b} =====')
+              for i in range(a-1,min(b,len(lines))):
+                  line=lines[i]
+                  if a==6450 or ('期权' in line or 'option' in line.lower() or 'data_menu' in line):
+                      print(f'{i+1}: {line}')
           PY
