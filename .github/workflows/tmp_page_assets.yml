@@ -12,9 +12,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           python - <<'PY'
-          import requests,re
-          u='https://cmes-data.com/profile.html'
-          t=requests.get(u,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
-          print('len',len(t))
-          print('\n'.join(re.findall(r'<script[^>]*>.*?</script>|<script[^>]+src=["\'][^"\']+["\'][^>]*></script>',t,re.I|re.S))[-20000:])
+          import requests
+          for p in ['config.js?v=20260815','js/common.js?v=20260818','js/profile.js?v=20260815']:
+              u='https://cmes-data.com/'+p
+              s=requests.get(u,headers={'User-Agent':'Mozilla/5.0'},timeout=20).text
+              print('===== '+p+' =====')
+              print(s)
           PY
