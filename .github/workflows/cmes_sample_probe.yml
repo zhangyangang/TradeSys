@@ -1,4 +1,4 @@
-name: Probe TDX option 1m anonymous access
+name: Probe Eastmoney expired ETF option minute history
 on:
   push:
     branches:
@@ -8,47 +8,62 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install tdxaidata
-        run: |
-          python -m pip install -q --upgrade pip
-          python -m pip install -q tdxaidata -i https://pypi.tuna.tsinghua.edu.cn/simple
-      - name: Test option historical minute access without key
+      - name: Probe Eastmoney market ids
         shell: python
         run: |
-          import os, json, traceback, sys
-          print("PY",sys.version)
-          try:
-              import tdxaidata
-              print("TDXAIDATA",getattr(tdxaidata,"__version__",None),tdxaidata)
-              from tdxaidata import tqs
-          except Exception as e:
-              print("IMPORT_ERR",type(e).__name__,str(e))
-              raise
-          tests=[
-              ("10010156.SH","1m","2025-11-20","2025-11-26"),
-              ("10001313.SH","1m","2018-12-20","2018-12-26"),
-              ("90005168.SZ","1m","2025-04-17","2025-04-23"),
-              ("510500.SH","1m","2025-11-20","2025-11-26"),
-          ]
-          for code,period,start,end in tests:
-              print("\nTEST",code,period,start,end)
-              try:
-                  r=tqs.get_market_data(
-                      field_list=["Open","High","Low","Close","Volume","Amount"],
-                      stock_list=[code],
-                      period=period,
-                      start_time=start,
-                      end_time=end,
-                  )
-                  print("TYPE",type(r).__name__)
-                  s=str(r)
-                  print("RESULT",s[:5000])
-              except Exception as e:
-                  print("ERR",type(e).__name__,str(e)[:3000])
-                  traceback.print_exc(limit=2)
+          import requests, json, re, time
+          s=requests.Session()
+          s.headers.update({"User-Agent":"Mozilla/5.0","Referer":"https://quote.eastmoney.com/"})
+          markets=[10,12,140,141,151,163,226]
+          codes=["10010156","10001313","90005168","90001345"]
+          trends="https://push2.eastmoney.com/api/qt/stock/trends2/get"
+          kline="https://push2his.eastmoney.com/api/qt/stock/kline/get"
+          for code in codes:
+              print("\n### CODE",code)
+              for m in markets:
+                  secid=f"{m}.{code}"
+                  # trends, test ndays=1,5
+                  for nd in (1,5):
+                      try:
+                          p={
+                            "secid":secid,
+                            "fields1":"f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f17",
+                            "fields2":"f51,f53,f54,f55,f56,f57,f58",
+                            "iscr":"0","iscca":"0",
+                            "ut":"f057cbcbce2a86e2866ab8877db1d059",
+                            "ndays":str(nd),
+                          }
+                          r=s.get(trends,params=p,timeout=20)
+                          try:j=r.json()
+                          except Exception:
+                              txt=r.text
+                              mm=re.search(r'\((.*)\)\s*$',txt,re.S)
+                              j=json.loads(mm.group(1)) if mm else {}
+                          d=(j.get("data") or {})
+                          arr=d.get("trends") if isinstance(d,dict) else None
+                          if arr:
+                              print("TRENDS_OK",secid,"ndays",nd,"N",len(arr),"FIRST",arr[0],"LAST",arr[-1])
+                      except Exception as e:
+                          print("TRENDS_ERR",secid,nd,type(e).__name__,str(e)[:120])
+                  # historical 1m/5m K line
+                  for klt in (1,5):
+                      try:
+                          p={
+                            "secid":secid,
+                            "fields1":"f1,f2,f3,f4,f5,f6",
+                            "fields2":"f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+                            "ut":"7eea3edcaed734bea9cbfc24409ed989",
+                            "klt":str(klt),"fqt":"0",
+                            "beg":"20180101","end":"20261231",
+                            "lmt":"1000000",
+                          }
+                          r=s.get(kline,params=p,timeout=20)
+                          j=r.json()
+                          d=(j.get("data") or {})
+                          arr=d.get("klines") if isinstance(d,dict) else None
+                          if arr:
+                              print("KLINE_OK",secid,"klt",klt,"N",len(arr),"FIRST",arr[0],"LAST",arr[-1])
+                      except Exception as e:
+                          print("KLINE_ERR",secid,klt,type(e).__name__,str(e)[:120])
