@@ -1,0 +1,66 @@
+name: Probe public/demo option data APIs
+on:
+  push:
+    branches:
+      - "tmp/fetch-etf-option-2025"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe CMES package
+        shell: bash
+        run: |
+          set -x
+          python -m pip install -q cmesdata pandas
+          python - <<'PY'
+          import cmesdata as cs, inspect, json, traceback
+          print("CMES VERSION", getattr(cs,"__version__",None))
+          print("CMES NAMES", [x for x in dir(cs) if not x.startswith("_")])
+          for name in ["login","get_history_data","get_option_minute","CMESClient"]:
+              obj=getattr(cs,name,None)
+              print("OBJ",name,obj)
+              try:
+                  if obj: print("SIG",name,inspect.signature(obj))
+              except: pass
+          # Anonymous attempts
+          for callname, fn in [
+              ("history_anon", lambda: cs.get_history_data("SH.510500","2025-10-23","2025-10-23","1min")),
+              ("opt_anon", lambda: cs.get_option_minute(symbol="510500P2511M06250", start="2025-10-23", end="2025-10-23") if hasattr(cs,"get_option_minute") else None),
+          ]:
+              try:
+                  r=fn()
+                  print(callname, type(r), getattr(r,"shape",None))
+                  print(r.head().to_string() if hasattr(r,"head") else repr(r)[:1000])
+              except Exception as e:
+                  print(callname,"ERR",repr(e))
+          # Official documentation example tokens only (not private credentials)
+          for tok in [
+              "c79cesab1a56422h9a920fe0aad35e38",
+              "c79cesdffwerfer56422f9sdffgrtg35ec8",
+          ]:
+              try:
+                  rr=cs.login(tok)
+                  print("LOGIN_EXAMPLE_TOKEN",tok[:8],repr(rr))
+                  try:
+                      d=cs.get_history_data("SH.510500","2025-10-23","2025-10-23","1min")
+                      print("HISTORY_AFTER_LOGIN",getattr(d,"shape",None))
+                      print(d.head().to_string() if hasattr(d,"head") else repr(d)[:500])
+                  except Exception as e:
+                      print("HISTORY_AFTER_LOGIN_ERR",repr(e))
+                  try: cs.login_out()
+                  except: pass
+              except Exception as e:
+                  print("LOGIN_EXAMPLE_TOKEN_ERR",tok[:8],repr(e))
+          PY
+      - name: Upload logs marker
+        run: echo done > probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-probe
+          path: probe.txt
+          retention-days: 1
